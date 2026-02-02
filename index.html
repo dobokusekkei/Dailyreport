@@ -1,0 +1,853 @@
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { 
+  FileText, 
+  Users, 
+  CheckCircle2, 
+  ChevronRight, 
+  Upload, 
+  Loader2,
+  Zap,
+  Table,
+  FileSpreadsheet,
+  X,
+  Trash2
+} from 'lucide-react';
+
+// SheetJS (xlsx) をCDNから読み込む
+const useSheetJS = () => {
+  const [xlsx, setXlsx] = useState(null);
+  
+  useEffect(() => {
+    if (window.XLSX) {
+      setXlsx(window.XLSX);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.onload = () => setXlsx(window.XLSX);
+    document.body.appendChild(script);
+  }, []);
+  
+  return xlsx;
+};
+
+// --- ヘルパー関数群 ---
+
+/**
+ * 独自の時刻フォーマットを「時間(10進数)」に変換する
+ * ルール: 整数部は時間、小数部は分を表す（60進法）
+ * 例: 2.1 -> 2時間10分 -> 2.166...時間
+ * 例: 2.3 -> 2時間30分 -> 2.5時間
+ * 例: 1.3 -> 1時間30分 -> 1.5時間
+ */
+const parseSpecialTime = (val) => {
+  if (val === null || val === undefined || val === '') return 0;
+  
+  // 文字列に変換して処理
+  const str = String(val).trim().replace(',', '.');
+
+  // "8:30" のようなコロン形式の場合
+  if (str.includes(':')) {
+    const parts = str.split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    if (!isNaN(h) && !isNaN(m)) {
+      return h + (m / 60);
+    }
+    return 0;
+  }
+
+  // 数値としてパース
+  const floatVal = parseFloat(str);
+  if (isNaN(floatVal)) return 0;
+
+  // 整数部 = 時間
+  const hours = Math.floor(floatVal);
+  // 小数部 = 分 (例: 2.1 -> 0.1 -> 10分, 2.05 -> 0.05 -> 5分)
+  // 浮動小数点誤差を避けるため、一度文字列に戻して小数部を取得するか、四捨五入して扱う
+  // ここでは (Val - Hours) * 100 を四捨五入して分とする
+  const minutes = Math.round((floatVal - hours) * 100);
+
+  // 分を時間に換算して足す
+  return hours + (minutes / 60);
+};
+
+/**
+ * 時間(10進数)を独自の表示フォーマットに戻す
+ * 例: 2.5時間 -> 2.30 (2時間30分)
+ * 例: 2.166...時間 -> 2.10 (2時間10分)
+ */
+const formatSpecialTime = (decimalHours) => {
+  if (!decimalHours && decimalHours !== 0) return '-';
+  
+  const sign = decimalHours < 0 ? '-' : '';
+  const absHours = Math.abs(decimalHours);
+  
+  const h = Math.floor(absHours);
+  const m = Math.round((absHours - h) * 60);
+  
+  // 分が10未満の場合は '0' をつけない仕様か、つける仕様か
+  // ユーザー入力が 2.1 (2時間10分) なので、出力も 2.10 のようにする
+  // 2.1 = 2時間10分, 2.01 = 2時間1分
+  // ここではわかりやすく、常に小数2桁で分を表現する (例: 2.30, 2.10)
+  
+  // 分を数値として結合 (例: 30分 -> 0.30)
+  const val = h + (m / 100);
+  return sign + val.toFixed(2);
+};
+
+// 社員番号の正規化
+const normalizeId = (id) => {
+  if (!id) return '';
+  const halfWidth = String(id).replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+  return halfWidth.replace(/^0+/, '').trim();
+};
+
+// 氏名の正規化 (スペース除去)
+const normalizeName = (name) => {
+  if (!name) return '';
+  return String(name).replace(/[\s\u3000]+/g, '');
+};
+
+/**
+ * データパーサークラス
+ */
+class AttendanceFileParser {
+  constructor(xlsx) {
+    this.xlsx = xlsx;
+  }
+
+  async parseFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = this.xlsx.read(data, { 
+            type: 'array', 
+            cellDates: false, 
+            codepage: 932, 
+            cellFormula: false 
+          });
+          
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          
+          const rows = this.xlsx.utils.sheet_to_json(worksheet, { 
+            header: 1, 
+            defval: '',
+            raw: false 
+          });
+          resolve({ rows, fileName: file.name });
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = (error) => reject(error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async processFiles(files) {
+    const employees = {};
+
+    for (const file of files) {
+      try {
+        const { rows, fileName } = await this.parseFile(file);
+        const contentStr = rows.slice(0, 15).map(r => r.join(' ')).join(' ');
+        
+        const isDailyReportData = contentStr.includes('工事番号') && contentStr.includes('所定内') && !contentStr.includes('行番号');
+        const isDailyReportPrint = contentStr.includes('勤務日報') && (contentStr.includes('行番号') || fileName.includes('印刷用') || fileName.toLowerCase().endsWith('.xls'));
+        const isSchedule = contentStr.includes('勤務表') || (contentStr.includes('日付') && contentStr.includes('勤務状況'));
+
+        if (isDailyReportData) {
+          this.parseDailyReport_DataFormat(rows, employees);
+        } else if (isDailyReportPrint) {
+          this.parseDailyReport_PrintFormat(rows, employees);
+        } else if (isSchedule) {
+          this.parseSchedule(rows, employees);
+        } else {
+          console.warn(`形式不明: ${fileName}`);
+        }
+      } catch (e) {
+        console.error(`Error processing ${file.name}`, e);
+      }
+    }
+    return employees;
+  }
+
+  // --- 勤務表解析 ---
+  parseSchedule(rows, employees) {
+    let currentEmployeeId = null;
+    let currentEmployeeName = null;
+    let colMap = null;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] || [];
+      const rowStr = row.join(' ');
+
+      // 社員情報抽出
+      if (rowStr.includes('社員番号')) {
+        const idMatch = rowStr.match(/社員番号[\s:：]*(\d{5,10})/);
+        if (idMatch) {
+          currentEmployeeId = normalizeId(idMatch[1]);
+          const nameMatch = rowStr.match(/(?:氏名|氏　名)[\s:：]*([^\s,0-9]+(?:\s+[^\s,0-9]+)?)/);
+          if (nameMatch) currentEmployeeName = normalizeName(nameMatch[1]);
+          this.initEmployee(employees, currentEmployeeId, currentEmployeeName);
+        }
+      }
+
+      // ヘッダー検出
+      if (!colMap && (row.includes('日付') || row.includes('勤務状況'))) {
+        colMap = {
+          day: row.findIndex(c => c && c.includes('日付')),
+          status: row.findIndex(c => c && c.includes('勤務状況')),
+          start: row.findIndex(c => c && (c.includes('始業') || c.includes('開始'))),
+          end: row.findIndex(c => c && (c.includes('終業') || c.includes('終了'))),
+          breakTime: row.findIndex(c => c && c.includes('休憩') && !c.includes('深夜')),
+          nightBreak: row.findIndex(c => c && c.includes('深夜') && c.includes('休憩')), // 深夜休憩
+          overtime: row.findIndex(c => c && c.includes('時間外') && !c.includes('法内') && !c.includes('深夜')),
+          night: row.findIndex(c => c && c.includes('深夜') && !c.includes('休憩')),
+        };
+        if (colMap.day === -1) colMap.day = 0;
+        // 深夜休憩(M列=12)のフォールバック
+        if (colMap.nightBreak === -1) colMap.nightBreak = 12;
+        continue;
+      }
+
+      if (currentEmployeeId && colMap) {
+        const colA = String(row[colMap.day] || '').trim();
+        if (colA === '合計') {
+          currentEmployeeId = null;
+          continue;
+        }
+
+        const dayVal = parseInt(colA, 10);
+        if (!isNaN(dayVal) && dayVal >= 1 && dayVal <= 31) {
+          const startStr = row[colMap.start];
+          const endStr = row[colMap.end];
+          const breakTime = parseSpecialTime(row[colMap.breakTime]);
+          const nightBreakTime = parseSpecialTime(row[colMap.nightBreak]);
+          const overtime = parseSpecialTime(row[colMap.overtime]);
+          const nightTime = parseSpecialTime(row[colMap.night]);
+          
+          // 所定内時間の計算
+          let regularTime = 0;
+          if (startStr && endStr) {
+            let s = parseSpecialTime(startStr);
+            let e = parseSpecialTime(endStr);
+            if (e < s) e += 24; // 日またぎ
+            
+            // 計算: (終業 - 始業) - 休憩 - 深夜休憩 - 時間外
+            // ※ユーザー指示: 終業 - 始業 - 休憩 - 時間外 - 休憩(深夜休憩)
+            regularTime = Math.max(0, (e - s) - breakTime - nightBreakTime - overtime);
+          }
+
+          const record = {
+            day: dayVal,
+            status: String(row[colMap.status] || ''),
+            startTime: startStr ? String(startStr) : '',
+            endTime: endStr ? String(endStr) : '',
+            overtime,
+            regularTime,
+            nightTime
+          };
+          this.upsertRecord(employees[currentEmployeeId].schedule, record);
+        }
+      }
+    }
+  }
+
+  // --- 日報解析 (Data) ---
+  parseDailyReport_DataFormat(rows, employees) {
+    let currentEmployeeId = null;
+    let currentEmployeeName = null;
+    let colMap = null;
+    let headerRowIdx = -1;
+
+    for (let i = 0; i < 20 && i < rows.length; i++) {
+      const row = rows[i];
+      
+      if (!currentEmployeeId) {
+        const idIdx = row.findIndex(c => String(c).includes('社員番号'));
+        if (idIdx !== -1 && row[idIdx + 1]) currentEmployeeId = normalizeId(row[idIdx + 1]);
+        const nameIdx = row.findIndex(c => String(c).includes('社員名'));
+        if (nameIdx !== -1 && row[nameIdx + 1]) currentEmployeeName = normalizeName(String(row[nameIdx + 1]));
+      }
+
+      if (row.includes('工事番号') && row.includes('所定内')) {
+        headerRowIdx = i;
+        colMap = {
+          day: row.findIndex(c => c === '日'),
+          regular: row.findIndex(c => c.includes('所定内')),
+          overtime: row.findIndex(c => c.includes('時間外')),
+          night: row.findIndex(c => c.includes('深夜')),
+          holiday: row.findIndex(c => c.includes('休日')),
+        };
+        break;
+      }
+    }
+
+    if (!currentEmployeeId && currentEmployeeName) currentEmployeeId = `TEMP-${normalizeName(currentEmployeeName)}`;
+    if (!currentEmployeeId || !colMap) return;
+    this.initEmployee(employees, currentEmployeeId, currentEmployeeName);
+
+    for (let i = headerRowIdx + 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row) continue;
+      const dayVal = parseInt(row[colMap.day], 10);
+      if (!isNaN(dayVal) && dayVal >= 1 && dayVal <= 31) {
+        const regular = parseSpecialTime(row[colMap.regular]);
+        const overtime = parseSpecialTime(row[colMap.overtime]);
+        const night = parseSpecialTime(row[colMap.night]);
+        const holiday = parseSpecialTime(row[colMap.holiday]);
+        
+        const record = {
+          day: dayVal,
+          regularTime: regular,
+          overtime: overtime,
+          nightTime: night,
+          holidayWork: holiday,
+          status: (regular > 0 || overtime > 0 || holiday > 0) ? '出勤' : '',
+          startTime: '記録あり'
+        };
+        this.upsertRecord(employees[currentEmployeeId].report, record);
+      }
+    }
+  }
+
+  // --- 日報解析 (Print) ---
+  parseDailyReport_PrintFormat(rows, employees) {
+    let currentEmployeeId = null;
+    let currentEmployeeName = null;
+    const COL = { DATE: 3, REGULAR: 26, OVERTIME: 29, NIGHT: 32, HOLIDAY: 35, NAME: 32 };
+    
+    if (rows[7] && rows[7][COL.NAME]) currentEmployeeName = normalizeName(String(rows[7][COL.NAME]));
+
+    for (let i = 0; i < 10; i++) {
+      const rowStr = (rows[i] || []).join(' ');
+      const idMatch = rowStr.match(/社員番号[\s:：]*(\d{5,10})/);
+      if (idMatch) {
+        currentEmployeeId = normalizeId(idMatch[1]);
+        break;
+      }
+    }
+    
+    if (!currentEmployeeId && currentEmployeeName) currentEmployeeId = `TEMP-${normalizeName(currentEmployeeName)}`;
+    if (!currentEmployeeId) return;
+    this.initEmployee(employees, currentEmployeeId, currentEmployeeName);
+
+    for (let i = 10; i < rows.length; i++) {
+      const row = rows[i] || [];
+      const dayValRaw = row[COL.DATE];
+      if (dayValRaw == 0 || dayValRaw === '0') break;
+
+      const dayVal = parseInt(dayValRaw, 10);
+      if (!isNaN(dayVal) && dayVal >= 1 && dayVal <= 31) {
+        const regular = parseSpecialTime(row[COL.REGULAR]);
+        const overtime = parseSpecialTime(row[COL.OVERTIME]);
+        const night = parseSpecialTime(row[COL.NIGHT]);
+        const holiday = parseSpecialTime(row[COL.HOLIDAY]);
+
+        const record = {
+          day: dayVal,
+          regularTime: regular,
+          overtime: overtime,
+          nightTime: night,
+          holidayWork: holiday,
+          status: (regular > 0 || overtime > 0 || holiday > 0) ? '出勤' : '',
+          startTime: '記録あり'
+        };
+        this.upsertRecord(employees[currentEmployeeId].report, record);
+      }
+    }
+  }
+
+  initEmployee(employees, id, name) {
+    if (!employees[id]) {
+      employees[id] = {
+        employeeId: id,
+        employeeName: name || `Employee-${id}`,
+        schedule: [],
+        report: []
+      };
+    } else if (name && !employees[id].employeeName.match(/^[^\s]+$/)) {
+        employees[id].employeeName = name;
+    }
+  }
+
+  upsertRecord(array, record) {
+    const idx = array.findIndex(r => r.day === record.day);
+    if (idx >= 0) {
+      const existing = array[idx];
+      array[idx] = {
+        ...existing,
+        ...record,
+        regularTime: (existing.regularTime || 0) + (record.regularTime || 0),
+        overtime: (existing.overtime || 0) + (record.overtime || 0),
+        nightTime: (existing.nightTime || 0) + (record.nightTime || 0),
+        holidayWork: (existing.holidayWork || 0) + (record.holidayWork || 0),
+        status: record.status || existing.status,
+        startTime: record.startTime || existing.startTime,
+        endTime: record.endTime || existing.endTime,
+      };
+    } else {
+      array.push(record);
+    }
+  }
+}
+
+export default function App() {
+  const [files, setFiles] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [employees, setEmployees] = useState({}); 
+  const [selectedId, setSelectedId] = useState(null);
+  const [view, setView] = useState('input');
+  const fileInputRef = useRef(null);
+  const xlsx = useSheetJS();
+
+  const onFileChange = (e) => {
+    setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+  };
+
+  const removeFile = (index) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleProcess = async () => {
+    if (files.length === 0 || !xlsx) return;
+    setIsProcessing(true);
+
+    try {
+      const parser = new AttendanceFileParser(xlsx);
+      const parsedData = await parser.processFiles(files);
+      
+      setEmployees(prev => {
+        const next = { ...prev };
+        Object.values(parsedData).forEach(newEmp => {
+          let matchKey = null;
+          if (next[newEmp.employeeId]) {
+            matchKey = newEmp.employeeId;
+          } else {
+            const normalizedNewName = normalizeName(newEmp.employeeName);
+            matchKey = Object.keys(next).find(key => 
+              normalizeName(next[key].employeeName) === normalizedNewName
+            );
+          }
+
+          if (matchKey) {
+            const existing = next[matchKey];
+            existing.schedule = mergeRecords([...existing.schedule, ...newEmp.schedule]);
+            existing.report = mergeRecords([...existing.report, ...newEmp.report]);
+            if (newEmp.employeeId && !newEmp.employeeId.startsWith('TEMP-')) existing.employeeId = newEmp.employeeId;
+            if (newEmp.employeeName && newEmp.employeeName.length > existing.employeeName.length) existing.employeeName = newEmp.employeeName;
+          } else {
+            const key = newEmp.employeeId || `TEMP-${normalizeName(newEmp.employeeName)}`;
+            next[key] = newEmp;
+          }
+        });
+        return next;
+      });
+
+      setFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setView('dashboard');
+    } catch (error) {
+      console.error(error);
+      alert(`エラー: ${error.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const mergeRecords = (records) => {
+    const map = new Map();
+    records.forEach(r => {
+      if (map.has(r.day)) {
+        const existing = map.get(r.day);
+        map.set(r.day, {
+          ...existing,
+          ...r,
+          regularTime: (existing.regularTime || 0) + (r.regularTime || 0),
+          overtime: (existing.overtime || 0) + (r.overtime || 0),
+          nightTime: (existing.nightTime || 0) + (r.nightTime || 0),
+          holidayWork: (existing.holidayWork || 0) + (r.holidayWork || 0),
+          status: r.status || existing.status,
+          startTime: r.startTime || existing.startTime,
+          endTime: r.endTime || existing.endTime,
+        });
+      } else {
+        map.set(r.day, r);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.day - b.day);
+  };
+
+  const employeeList = useMemo(() => Object.values(employees), [employees]);
+  const currentEmployee = employees[selectedId] || employeeList[0];
+
+  useEffect(() => {
+    if (!selectedId && employeeList.length > 0) {
+      // Auto-select optional
+    }
+  }, [employeeList, selectedId]);
+
+  const comparisonData = useMemo(() => {
+    if (!currentEmployee) return [];
+    const days = Array.from({ length: 31 }, (_, i) => i + 1);
+    return days.map(day => {
+      const sch = currentEmployee.schedule?.find(r => r.day === day) || {};
+      const rep = currentEmployee.report?.find(r => r.day === day) || {};
+      
+      const diffOvertime = (sch.overtime || 0) - (rep.overtime || 0);
+      const diffRegular = (sch.regularTime || 0) - (rep.regularTime || 0);
+      const diffNight = (sch.nightTime || 0) - (rep.nightTime || 0);
+      const hasHolidayWork = rep.holidayWork > 0;
+
+      const hasData = sch.status || rep.status || sch.overtime > 0 || rep.overtime > 0 || sch.regularTime > 0 || rep.regularTime > 0;
+
+      return { 
+        day, sch, rep, 
+        diffOvertime, diffRegular, diffNight, hasHolidayWork,
+        hasData
+      };
+    }).filter(d => d.hasData);
+  }, [currentEmployee]);
+
+  const clearData = () => {
+    if(confirm("全データを削除しますか？")) {
+      setEmployees({});
+      setSelectedId(null);
+      setView('input');
+    }
+  };
+
+  const handleSelectEmployee = (emp) => {
+    const key = Object.keys(employees).find(k => employees[k] === emp);
+    setSelectedId(key);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-8 pb-20">
+      <header className="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg">
+            <Zap className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.3.0)</h1>
+            <p className="text-xs text-slate-500 font-medium">独自の60進法小数表記(2.3=2時間30分)に完全対応</p>
+          </div>
+        </div>
+        <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+          <button 
+            onClick={() => setView('input')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'input' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+          >
+            ファイル登録
+          </button>
+          <button 
+            onClick={() => setView('dashboard')}
+            disabled={employeeList.length === 0}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'dashboard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50 disabled:opacity-30'}`}
+          >
+            比較ボード
+          </button>
+          <div className="w-px bg-slate-200 mx-1 my-2" />
+          <button onClick={clearData} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg">
+            <Trash2 className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto">
+        {view === 'input' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <FileSpreadsheet className="w-5 h-5" />
+                  </div>
+                  <h2 className="font-bold">ファイルアップロード</h2>
+                </div>
+                
+                <div 
+                  className={`border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center transition-all cursor-pointer group ${!xlsx ? 'opacity-50 pointer-events-none' : 'hover:border-indigo-400 hover:bg-indigo-50/50'}`}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    multiple 
+                    accept=".xls, .xlsx, .csv"
+                    onChange={onFileChange} 
+                  />
+                  <Upload className="w-12 h-12 mx-auto mb-4 text-slate-300 group-hover:text-indigo-500 transition-colors" />
+                  <p className="text-base font-bold text-slate-600">
+                    {xlsx ? "クリックしてファイルを選択" : "解析エンジンをロード中..."}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-2">
+                    「勤務表(.xlsx)」と「日報(.xls)」をまとめて選択してください。<br/>
+                    氏名スペース除去・独自時間フォーマット(2.1=2:10)に対応。
+                  </p>
+                </div>
+
+                {files.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    {files.map((file, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 text-sm">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <div className="w-8 h-8 bg-white rounded-lg border flex items-center justify-center text-indigo-500">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <span className="font-bold text-slate-700 truncate">{file.name}</span>
+                        </div>
+                        <button onClick={() => removeFile(idx)} className="text-slate-400 hover:text-rose-500 p-2">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={handleProcess}
+                disabled={isProcessing || files.length === 0}
+                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-black rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl shadow-indigo-200 active:scale-95"
+              >
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                    解析中...
+                  </>
+                ) : (
+                  <>
+                    <Table className="w-6 h-6" />
+                    解析を実行
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 h-fit">
+              <h3 className="font-bold mb-4 flex items-center gap-2 border-b pb-4">
+                <Users className="w-5 h-5 text-indigo-600" />
+                解析済みデータ ({employeeList.length})
+              </h3>
+              <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                {employeeList.map((emp, i) => (
+                    <div key={i} className="p-3 border rounded-xl bg-slate-50/50 flex items-center justify-between">
+                      <div>
+                        <div className="text-[9px] font-mono text-slate-400">ID: {emp.employeeId}</div>
+                        <div className="text-sm font-bold text-slate-700">{emp.employeeName}</div>
+                      </div>
+                      <div className="flex flex-col gap-1 items-end">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${emp.schedule.length > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-300'}`}>
+                          勤務表:{emp.schedule.length}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${emp.report.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-300'}`}>
+                          日報:{emp.report.length}
+                        </span>
+                      </div>
+                    </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col lg:flex-row gap-6">
+            <aside className="w-full lg:w-64 space-y-2 shrink-0">
+              <h3 className="text-[10px] font-black text-slate-400 px-3 py-1 uppercase tracking-widest">Employee List</h3>
+              {employeeList.map((emp, i) => {
+                const key = Object.keys(employees).find(k => employees[k] === emp);
+                const isSelected = selectedId === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setSelectedId(key)}
+                    className={`w-full p-3 rounded-2xl text-left transition-all flex items-center justify-between border ${
+                      isSelected 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg scale-105 z-10' 
+                        : 'bg-white border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="truncate flex-1">
+                      <div className={`text-[9px] font-mono ${isSelected ? 'text-indigo-200' : 'text-slate-400'}`}>
+                        #{emp.employeeId}
+                      </div>
+                      <div className="font-bold truncate text-sm">
+                        {emp.employeeName}
+                      </div>
+                    </div>
+                    <ChevronRight className={`w-4 h-4 shrink-0 ${isSelected ? 'opacity-100' : 'opacity-20'}`} />
+                  </button>
+                );
+              })}
+            </aside>
+
+            <div className="flex-1 space-y-4">
+              {!currentEmployee ? (
+                <div className="bg-white h-[400px] rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400">
+                  <p className="font-bold text-sm">社員を選択してください</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                      <div className="text-[10px] font-black text-slate-400 uppercase mb-2">所定内 勤務時間</div>
+                      <div className="flex justify-between items-end mb-1">
+                        <div>
+                          <span className="text-xs text-slate-400 block">勤務表(計算)</span>
+                          <span className="text-xl font-mono font-bold text-slate-700">
+                            {formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.sch.regularTime || 0), 0))}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs text-slate-400 block">日報(合計)</span>
+                          <span className="text-xl font-mono font-bold text-blue-600">
+                            {formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.rep.regularTime || 0), 0))}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffRegular, 0)) > 0.01 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                         Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffRegular, 0))}
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                      <div className="text-[10px] font-black text-slate-400 uppercase mb-2">残業時間 (時間外)</div>
+                      <div className="flex justify-between items-end mb-1">
+                        <div>
+                          <span className="text-xs text-slate-400 block">勤務表</span>
+                          <span className="text-xl font-mono font-bold text-slate-700">
+                            {formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.sch.overtime || 0), 0))}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs text-slate-400 block">日報(合計)</span>
+                          <span className="text-xl font-mono font-bold text-blue-600">
+                            {formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.rep.overtime || 0), 0))}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffOvertime, 0)) > 0.01 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                         Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffOvertime, 0))}
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                      <div className="text-[10px] font-black text-slate-400 uppercase mb-2">深夜時間</div>
+                      <div className="flex justify-between items-end mb-1">
+                        <div>
+                          <span className="text-xs text-slate-400 block">勤務表</span>
+                          <span className="text-xl font-mono font-bold text-slate-700">
+                            {formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.sch.nightTime || 0), 0))}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs text-slate-400 block">日報(合計)</span>
+                          <span className="text-xl font-mono font-bold text-blue-600">
+                            {formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.rep.nightTime || 0), 0))}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffNight, 0)) > 0.01 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                         Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffNight, 0))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* テーブル */}
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-6">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            <th className="px-4 py-4 w-16 text-center">Day</th>
+                            <th className="px-4 py-4 border-l bg-slate-100/50">項目</th>
+                            <th className="px-4 py-4 border-l">勤務表 (Schedule)</th>
+                            <th className="px-4 py-4 border-l">日報 (Report)</th>
+                            <th className="px-4 py-4 border-l text-center w-24">差異</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-xs">
+                          {comparisonData.map(({ day, sch, rep, diffOvertime, diffRegular, diffNight, hasHolidayWork }) => {
+                            const hasError = Math.abs(diffOvertime) > 0.01 || Math.abs(diffRegular) > 0.01 || Math.abs(diffNight) > 0.01;
+                            const statusColor = sch.status?.includes('休') ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600';
+
+                            return (
+                              <tr key={day} className={`hover:bg-slate-50 transition-colors ${hasError ? 'bg-rose-50/10' : ''}`}>
+                                <td className="px-4 py-4 font-mono font-bold text-slate-400 text-center text-lg">{day}</td>
+                                
+                                <td className="px-4 py-4 border-l bg-slate-50/30">
+                                  <div className="flex flex-col gap-2">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">ステータス</span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">時間帯</span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">所定内</span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">時間外</span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">深夜</span>
+                                  </div>
+                                </td>
+
+                                <td className="px-4 py-4 border-l">
+                                  <div className="flex flex-col gap-2">
+                                    <div className="h-5">
+                                      {sch.status && <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${statusColor}`}>{sch.status}</span>}
+                                    </div>
+                                    <div className="font-mono h-4 text-slate-600">
+                                      {sch.startTime ? `${sch.startTime}-${sch.endTime}` : '-'}
+                                    </div>
+                                    <div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.regularTime)}</div>
+                                    <div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.overtime)}</div>
+                                    <div className="font-mono text-slate-400">{formatSpecialTime(sch.nightTime)}</div>
+                                  </div>
+                                </td>
+
+                                <td className="px-4 py-4 border-l">
+                                  <div className="flex flex-col gap-2">
+                                    <div className="h-5">
+                                      {hasHolidayWork && <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-700">休出あり</span>}
+                                    </div>
+                                    <div className="font-mono h-4 text-slate-400 text-[10px]">
+                                      {rep.startTime ? '記録あり' : '-'}
+                                    </div>
+                                    <div className="font-mono font-bold text-blue-600">{formatSpecialTime(rep.regularTime)}</div>
+                                    <div className="font-mono font-bold text-blue-600">{formatSpecialTime(rep.overtime)}</div>
+                                    <div className="font-mono text-slate-400">{formatSpecialTime(rep.nightTime)}</div>
+                                  </div>
+                                </td>
+
+                                <td className="px-4 py-4 border-l text-center align-middle">
+                                  <div className="flex flex-col gap-2 items-center justify-center h-full">
+                                    <div className="h-5"></div>
+                                    <div className="h-4"></div>
+                                    <div className={`font-mono font-bold ${Math.abs(diffRegular) > 0.01 ? 'text-rose-500' : 'text-emerald-500 opacity-20'}`}>
+                                      {Math.abs(diffRegular) > 0.01 ? formatSpecialTime(diffRegular) : 'OK'}
+                                    </div>
+                                    <div className={`font-mono font-bold ${Math.abs(diffOvertime) > 0.01 ? 'text-rose-500' : 'text-emerald-500 opacity-20'}`}>
+                                      {Math.abs(diffOvertime) > 0.01 ? formatSpecialTime(diffOvertime) : 'OK'}
+                                    </div>
+                                    <div className={`font-mono font-bold ${Math.abs(diffNight) > 0.01 ? 'text-rose-500' : 'text-emerald-500 opacity-20'}`}>
+                                      {Math.abs(diffNight) > 0.01 ? formatSpecialTime(diffNight) : 'OK'}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
