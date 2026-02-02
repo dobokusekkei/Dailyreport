@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.3.1)</title>
+  <title>勤怠・日報比較ツール (Ver.3.2)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -30,8 +30,7 @@
   <script type="text/babel">
     const { useState, useMemo, useRef, useEffect } = React;
 
-    // --- アイコン定義 (インラインSVG) ---
-    // 外部ライブラリ依存を排除し、確実に表示させる
+    // --- アイコン定義 (インラインSVGで確実に表示) ---
     const IconWrapper = ({ children, className = "w-5 h-5", ...props }) => (
       <svg 
         xmlns="http://www.w3.org/2000/svg" 
@@ -49,159 +48,85 @@
     );
 
     const FileText = (props) => (
-      <IconWrapper {...props}>
-        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="16" y1="13" x2="8" y2="13" />
-        <line x1="16" y1="17" x2="8" y2="17" />
-        <line x1="10" y1="9" x2="8" y2="9" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><line x1="10" y1="9" x2="8" y2="9" /></IconWrapper>
     );
-
     const Users = (props) => (
-      <IconWrapper {...props}>
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></IconWrapper>
     );
-
     const CheckCircle2 = (props) => (
-      <IconWrapper {...props}>
-        <circle cx="12" cy="12" r="10" />
-        <path d="m9 12 2 2 4-4" />
-      </IconWrapper>
+      <IconWrapper {...props}><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></IconWrapper>
     );
-
     const ChevronRight = (props) => (
-      <IconWrapper {...props}>
-        <path d="m9 18 6-6-6-6" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="m9 18 6-6-6-6" /></IconWrapper>
     );
-
     const Upload = (props) => (
-      <IconWrapper {...props}>
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="17 8 12 3 7 8" />
-        <line x1="12" y1="3" x2="12" y2="15" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></IconWrapper>
     );
-
     const Loader2 = ({ className, ...props }) => (
-      <IconWrapper className={`${className} animate-spin`} {...props}>
-        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-      </IconWrapper>
+      <IconWrapper className={`${className} animate-spin`} {...props}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></IconWrapper>
     );
-
     const Zap = (props) => (
-      <IconWrapper {...props}>
-        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-      </IconWrapper>
+      <IconWrapper {...props}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></IconWrapper>
     );
-
     const Table = (props) => (
-      <IconWrapper {...props}>
-        <path d="M12 3v18" />
-        <rect width="18" height="18" x="3" y="3" rx="2" />
-        <path d="M3 9h18" />
-        <path d="M3 15h18" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M12 3v18" /><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /></IconWrapper>
     );
-
     const FileSpreadsheet = (props) => (
-      <IconWrapper {...props}>
-        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-        <polyline points="14 2 14 8 20 8" />
-        <path d="M8 13h2" />
-        <path d="M8 17h2" />
-        <path d="M14 13h2" />
-        <path d="M14 17h2" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><path d="M8 13h2" /><path d="M8 17h2" /><path d="M14 13h2" /><path d="M14 17h2" /></IconWrapper>
     );
-
     const X = (props) => (
-      <IconWrapper {...props}>
-        <path d="M18 6 6 18" />
-        <path d="m6 6 12 12" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></IconWrapper>
     );
-
     const Trash2 = (props) => (
-      <IconWrapper {...props}>
-        <path d="M3 6h18" />
-        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-        <line x1="10" y1="11" x2="10" y2="17" />
-        <line x1="14" y1="11" x2="14" y2="17" />
-      </IconWrapper>
+      <IconWrapper {...props}><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></IconWrapper>
     );
-
 
     const useSheetJS = () => {
       const [xlsx, setXlsx] = useState(null);
-      
       useEffect(() => {
-        if (window.XLSX) {
-          setXlsx(window.XLSX);
-          return;
-        }
+        if (window.XLSX) { setXlsx(window.XLSX); return; }
         const interval = setInterval(() => {
-          if (window.XLSX) {
-            setXlsx(window.XLSX);
-            clearInterval(interval);
-          }
+          if (window.XLSX) { setXlsx(window.XLSX); clearInterval(interval); }
         }, 100);
         return () => clearInterval(interval);
       }, []);
-      
       return xlsx;
     };
 
     // --- ヘルパー関数群 ---
 
     /**
-     * 独自の時刻フォーマットを「時間(10進数)」に変換する
-     * ルール: 整数部は時間、小数部は分を表す（60進法）
+     * 独自の時刻フォーマット(H.MM)を「時間(10進数)」に変換する
      * 例: 2.1 -> 2時間10分 -> 2.166...時間
-     * 例: 2.3 -> 2時間30分 -> 2.5時間
-     * 例: 1.3 -> 1時間30分 -> 1.5時間
      */
     const parseSpecialTime = (val) => {
       if (val === null || val === undefined || val === '') return 0;
-      
-      // 文字列に変換して処理
       const str = String(val).trim().replace(',', '.');
 
-      // "8:30" のようなコロン形式の場合
+      // "8:30" 形式
       if (str.includes(':')) {
         const parts = str.split(':');
         const h = parseInt(parts[0], 10);
         const m = parseInt(parts[1], 10);
-        if (!isNaN(h) && !isNaN(m)) {
-          return h + (m / 60);
-        }
+        if (!isNaN(h) && !isNaN(m)) return h + (m / 60);
         return 0;
       }
 
-      // 数値としてパース
+      // 数値形式 "2.1" (2時間10分)
       const floatVal = parseFloat(str);
       if (isNaN(floatVal)) return 0;
 
-      // 整数部 = 時間
       const hours = Math.floor(floatVal);
-      // 小数部 = 分 (例: 2.1 -> 0.1 -> 10分, 2.05 -> 0.05 -> 5分)
-      // ここでは (Val - Hours) * 100 を四捨五入して分とする
+      // 小数部を分として解釈 (例: 0.1 -> 10分)
       const minutes = Math.round((floatVal - hours) * 100);
 
-      // 分を時間に換算して足す
       return hours + (minutes / 60);
     };
 
     /**
-     * 時間(10進数)を独自の表示フォーマットに戻す
+     * 時間(10進数)を独自の表示フォーマット(H.MM)に戻す
      * 例: 2.5時間 -> 2.30 (2時間30分)
-     * 例: 2.166...時間 -> 2.10 (2時間10分)
+     * 計算結果が 7.60 (7時間60分) になるような場合も、ここで正規化されて 8.00 になる
      */
     const formatSpecialTime = (decimalHours) => {
       if (!decimalHours && decimalHours !== 0) return '-';
@@ -209,11 +134,23 @@
       const sign = decimalHours < 0 ? '-' : '';
       const absHours = Math.abs(decimalHours);
       
+      // 時間と分に分離 (60進法)
       const h = Math.floor(absHours);
       const m = Math.round((absHours - h) * 60);
       
-      // 分を数値として結合 (例: 30分 -> 0.30)
-      const val = h + (m / 100);
+      // 分を小数部に変換 (30分 -> .30)
+      // 分が60の場合は繰り上がるが、Date計算等ではないので
+      // ここでは h + m/100 として結合するだけでOK
+      // (例: 7h + 60m -> 7 + 0.60 = 7.60 ではなく、
+      //  m=60になることは round の仕様上ありえるが、
+      //  通常の時間計算なら繰り上がって h+1, m=0 になるはず)
+      
+      // 安全のためDateオブジェクト等を使って正規化
+      const totalMinutes = Math.round(absHours * 60);
+      const normH = Math.floor(totalMinutes / 60);
+      const normM = totalMinutes % 60;
+
+      const val = normH + (normM / 100);
       return sign + val.toFixed(2);
     };
 
@@ -250,10 +187,8 @@
                 codepage: 932, 
                 cellFormula: false 
               });
-              
               const firstSheetName = workbook.SheetNames[0];
               const worksheet = workbook.Sheets[firstSheetName];
-              
               const rows = this.xlsx.utils.sheet_to_json(worksheet, { 
                 header: 1, 
                 defval: '',
@@ -271,7 +206,6 @@
 
       async processFiles(files) {
         const employees = {};
-
         for (const file of files) {
           try {
             const { rows, fileName } = await this.parseFile(file);
@@ -307,7 +241,6 @@
           const row = rows[i] || [];
           const rowStr = row.join(' ');
 
-          // 社員情報抽出
           if (rowStr.includes('社員番号')) {
             const idMatch = rowStr.match(/社員番号[\s:：]*(\d{5,10})/);
             if (idMatch) {
@@ -318,7 +251,6 @@
             }
           }
 
-          // ヘッダー検出
           if (!colMap && (row.includes('日付') || row.includes('勤務状況'))) {
             colMap = {
               day: row.findIndex(c => c && c.includes('日付')),
@@ -326,12 +258,12 @@
               start: row.findIndex(c => c && (c.includes('始業') || c.includes('開始'))),
               end: row.findIndex(c => c && (c.includes('終業') || c.includes('終了'))),
               breakTime: row.findIndex(c => c && c.includes('休憩') && !c.includes('深夜')),
-              nightBreak: row.findIndex(c => c && c.includes('深夜') && c.includes('休憩')), // 深夜休憩
+              nightBreak: row.findIndex(c => c && c.includes('深夜') && c.includes('休憩')),
               overtime: row.findIndex(c => c && c.includes('時間外') && !c.includes('法内') && !c.includes('深夜')),
               night: row.findIndex(c => c && c.includes('深夜') && !c.includes('休憩')),
             };
             if (colMap.day === -1) colMap.day = 0;
-            if (colMap.nightBreak === -1) colMap.nightBreak = 12; // M列
+            if (colMap.nightBreak === -1) colMap.nightBreak = 12; // M列固定フォールバック
             continue;
           }
 
@@ -351,14 +283,12 @@
               const overtime = parseSpecialTime(row[colMap.overtime]);
               const nightTime = parseSpecialTime(row[colMap.night]);
               
-              // 所定内時間の計算
+              // 所定内時間の計算: (終業 - 始業) - 休憩 - 深夜休憩 - 時間外
               let regularTime = 0;
               if (startStr && endStr) {
                 let s = parseSpecialTime(startStr);
                 let e = parseSpecialTime(endStr);
-                if (e < s) e += 24; // 日またぎ
-                
-                // 計算: (終業 - 始業) - 休憩 - 深夜休憩 - 時間外
+                if (e < s) e += 24;
                 regularTime = Math.max(0, (e - s) - breakTime - nightBreakTime - overtime);
               }
 
@@ -386,14 +316,12 @@
 
         for (let i = 0; i < 20 && i < rows.length; i++) {
           const row = rows[i];
-          
           if (!currentEmployeeId) {
             const idIdx = row.findIndex(c => String(c).includes('社員番号'));
             if (idIdx !== -1 && row[idIdx + 1]) currentEmployeeId = normalizeId(row[idIdx + 1]);
             const nameIdx = row.findIndex(c => String(c).includes('社員名'));
             if (nameIdx !== -1 && row[nameIdx + 1]) currentEmployeeName = normalizeName(String(row[nameIdx + 1]));
           }
-
           if (row.includes('工事番号') && row.includes('所定内')) {
             headerRowIdx = i;
             colMap = {
@@ -654,8 +582,8 @@
                 <Zap className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.3.1)</h1>
-                <p className="text-xs text-slate-500 font-medium">独自の60進法小数表記(2.3=2時間30分)に完全対応</p>
+                <h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.3.2)</h1>
+                <p className="text-xs text-slate-500 font-medium">独自の60進法小数表記(2.3=2時間30分)・所定内計算(休憩控除)対応</p>
               </div>
             </div>
             <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
@@ -757,22 +685,25 @@
                     解析済みデータ ({employeeList.length})
                   </h3>
                   <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                    {employeeList.map((emp, i) => (
-                        <div key={i} className="p-3 border rounded-xl bg-slate-50/50 flex items-center justify-between">
-                          <div>
-                            <div className="text-[9px] font-mono text-slate-400">ID: {emp.employeeId}</div>
-                            <div className="text-sm font-bold text-slate-700">{emp.employeeName}</div>
+                    {employeeList.map((emp, i) => {
+                        const key = Object.keys(employees).find(k => employees[k] === emp);
+                        return (
+                          <div key={key} className="p-3 border rounded-xl bg-slate-50/50 flex items-center justify-between">
+                            <div>
+                              <div className="text-[9px] font-mono text-slate-400">ID: {emp.employeeId}</div>
+                              <div className="text-sm font-bold text-slate-700">{emp.employeeName}</div>
+                            </div>
+                            <div className="flex flex-col gap-1 items-end">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${emp.schedule.length > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-300'}`}>
+                                勤務表:{emp.schedule.length}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${emp.report.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-300'}`}>
+                                日報:{emp.report.length}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex flex-col gap-1 items-end">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${emp.schedule.length > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-300'}`}>
-                              勤務表:{emp.schedule.length}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${emp.report.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-300'}`}>
-                              日報:{emp.report.length}
-                            </span>
-                          </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                   </div>
                 </div>
               </div>
