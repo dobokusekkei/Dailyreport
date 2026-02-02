@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.7.0)</title>
+  <title>勤怠・日報比較ツール (Ver.7.2)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -36,7 +36,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useMemo, useRef, useEffect } = React;
+    const { useState, useMemo, useRef, useEffect, useCallback } = React;
 
     // --- アイコン定義 ---
     const IconWrapper = ({ children, className = "w-5 h-5", ...props }) => (
@@ -53,7 +53,7 @@
     const FileSpreadsheet = (p) => <IconWrapper {...p}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><path d="M8 13h2" /><path d="M8 17h2" /><path d="M14 13h2" /><path d="M14 17h2" /></IconWrapper>;
     const X = (p) => <IconWrapper {...p}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></IconWrapper>;
     const Trash2 = (p) => <IconWrapper {...p}><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></IconWrapper>;
-    const Settings = (p) => <IconWrapper {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconWrapper>;
+    const Settings = (p) => <IconWrapper {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconWrapper>;
     const Save = (p) => <IconWrapper {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></IconWrapper>;
     const Download = (p) => <IconWrapper {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></IconWrapper>;
     const AlertTriangle = (p) => <IconWrapper {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></IconWrapper>;
@@ -110,73 +110,151 @@
       return String(name).replace(/[\s\u3000]+/g, '');
     };
 
-    // --- ヘルプモーダル ---
+    // --- ヘルプモーダル (内容拡充版) ---
     const HelpModal = ({ isOpen, onClose }) => {
       if (!isOpen) return null;
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 modal-overlay" onClick={onClose}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-              <h2 className="text-lg font-bold flex items-center gap-2"><HelpCircle className="w-6 h-6 text-indigo-500" /> 整合性チェックのルール説明</h2>
-              <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+              <h2 className="text-xl font-bold flex items-center gap-2 text-indigo-700"><HelpCircle className="w-6 h-6" /> 操作ガイド・判定ルール</h2>
+              <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6" /></button>
             </div>
-            <div className="p-8 overflow-y-auto text-sm leading-relaxed text-slate-700 space-y-6">
-              
-              <section>
-                <h3 className="font-bold text-indigo-600 border-b border-indigo-100 pb-1 mb-2">1. 時間の読み取りルール</h3>
-                <p>本システムでは、時間入力の小数点以下を「分」として扱います（60進法）。</p>
-                <ul className="list-disc list-inside ml-4 mt-1 space-y-1 bg-slate-50 p-3 rounded-lg">
-                  <li><strong>2.10 (または 2.1)</strong> → <span className="font-bold">2時間10分</span></li>
-                  <li><strong>2.30 (または 2.3)</strong> → <span className="font-bold">2時間30分</span>（2.5時間ではない）</li>
-                  <li>計算時は分単位に変換して正確に合算します（例：1.30 + 1.30 = 3.00）。</li>
-                </ul>
-              </section>
+            <div className="p-8 overflow-y-auto text-sm leading-relaxed text-slate-700 space-y-8">
 
+              {/* 1. ファイル形式 */}
               <section>
-                <h3 className="font-bold text-indigo-600 border-b border-indigo-100 pb-1 mb-2">2. 勤務表の「所定内時間」計算式</h3>
-                <p>勤務表ファイルには「所定内」の列がないため、以下の計算式で自動算出します。</p>
-                <div className="mt-2 p-3 bg-slate-100 rounded-lg font-mono text-xs">
-                  所定内 = (終業 - 始業) - 休憩 - 深夜休憩 - 時間外
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
+                   1. 対応ファイル形式
+                </h3>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <ul className="list-disc list-inside space-y-2">
+                    <li><strong>勤務表:</strong> <code className="bg-white px-2 py-1 rounded border">.xlsx</code> (Excelブック) または <code className="bg-white px-2 py-1 rounded border">.csv</code></li>
+                    <li><strong>日報:</strong> <code className="bg-white px-2 py-1 rounded border">.xls</code> (Excel 97-2003ブック) または <code className="bg-white px-2 py-1 rounded border">.csv</code></li>
+                    <li className="text-xs text-slate-500 ml-5">※日報は「出力データ形式（リスト）」と「印刷用形式（帳票）」のどちらも自動判別して読み込みます。</li>
+                    <li><strong>一括読込:</strong> 「フォルダを選択」ボタンから、フォルダ内の全ファイルを一度に読み込むことも可能です。</li>
+                  </ul>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">※時間年休がある場合は、以下の条件分岐を行います：<br/>
-                ・合計が8.0hになる場合(シフト変更) → 時間年休を引かない<br/>
-                ・それ以外(中抜け) → 時間年休を引く
-                </p>
               </section>
 
+              {/* 2. 時間計算ルール */}
               <section>
-                <h3 className="font-bold text-indigo-600 border-b border-indigo-100 pb-1 mb-2">3. 判定ロジックの種別</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="border rounded-xl p-4">
-                    <h4 className="font-bold text-emerald-600 mb-2">一般社員</h4>
-                    <ul className="list-disc list-inside space-y-1 text-xs">
-                      <li>所定内、残業、深夜を個別に比較。</li>
-                      <li><strong>夜業特例:</strong> 夜業をした場合、日報の所定内に「+8時間」されるルールに対応。<br/>(差分が-8.0hならOK、0hなら「未記入?」と警告)</li>
+                 <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
+                   2. 時間の読み取りと計算
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="font-bold text-indigo-600 mb-2">独自フォーマット (60進法)</h4>
+                    <p className="mb-2">入力値の小数点は「分」として扱われます。</p>
+                    <ul className="list-disc list-inside bg-slate-50 p-3 rounded-lg text-xs space-y-1">
+                      <li><strong>2.1</strong> (または 2.10) → <span className="font-bold">2時間10分</span></li>
+                      <li><strong>2.3</strong> (または 2.30) → <span className="font-bold">2時間30分</span></li>
+                      <li><strong>2.5</strong> (または 2.50) → <span className="font-bold">2時間50分</span></li>
                     </ul>
                   </div>
-                  <div className="border rounded-xl p-4">
-                    <h4 className="font-bold text-orange-600 mb-2">フレックス (設定必要)</h4>
-                    <ul className="list-disc list-inside space-y-1 text-xs">
-                      <li><strong>合算比較:</strong> 勤務表の所定内 と (日報の所定内＋日報の残業) を比較します。</li>
-                      <li>勤務表に「残業」が入力されていたらNG。</li>
-                      <li>サマリーの日報欄は「所定内のみ」の合計を表示します。</li>
-                    </ul>
+                  <div>
+                    <h4 className="font-bold text-indigo-600 mb-2">勤務表「所定内」の自動計算</h4>
+                    <p className="mb-2">勤務表には所定内列がないため、以下の式で算出します。</p>
+                    <div className="bg-slate-100 p-3 rounded-lg font-mono text-xs border border-slate-200">
+                      所定内 = (終業 - 始業) - 休憩 - 深夜休憩 - 時間外
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">※時間年休がある場合：合計8.0hになるなら時間年休を引かずに計算（シフト変更扱い）</p>
                   </div>
                 </div>
               </section>
 
+              {/* 3. 判定ロジック */}
               <section>
-                <h3 className="font-bold text-indigo-600 border-b border-indigo-100 pb-1 mb-2">4. その他のチェック</h3>
-                <ul className="list-disc list-inside ml-4 mt-1 space-y-1">
-                  <li><strong>H列チェック:</strong> 日報(印刷用)のH列(214-221行)に数値があれば「H列不整合」警告。</li>
-                  <li><strong>年休重複:</strong> 時間年休と残業が同時に入力されていたら警告。</li>
-                  <li><strong>20日締め:</strong> 「20日締め」モード時は、21日以降のデータを無視して判定・集計します。</li>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
+                   3. 社員属性ごとの判定ロジック
+                </h3>
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-indigo-50 text-indigo-900">
+                      <th className="p-2 border border-indigo-100">属性</th>
+                      <th className="p-2 border border-indigo-100">比較方法</th>
+                      <th className="p-2 border border-indigo-100">夜業時の特例</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="p-2 border border-slate-100 font-bold">一般社員</td>
+                      <td className="p-2 border border-slate-100">所定内、残業、深夜を個別に一致確認</td>
+                      <td className="p-2 border border-slate-100">
+                        <span className="font-bold text-emerald-600">あり</span><br/>
+                        夜業日は日報所定内に「+8時間」されるルールに対応。<br/>
+                        (差分-8.0hならOK、差分0hなら「8h未記入?」と警告)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 border border-slate-100 font-bold">管理職</td>
+                      <td className="p-2 border border-slate-100">所定内、残業、深夜を個別に一致確認</td>
+                      <td className="p-2 border border-slate-100">
+                        <span className="font-bold text-slate-400">なし</span><br/>
+                        夜業があっても所定内は加算されません。<br/>
+                        (通常通り厳密に比較します)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 border border-slate-100 font-bold">フレックス</td>
+                      <td className="p-2 border border-slate-100">
+                        <strong>合算比較:</strong><br/>
+                        勤務表[所定] vs (日報[所定]＋日報[残業])
+                      </td>
+                      <td className="p-2 border border-slate-100">
+                        <span className="font-bold text-orange-600">残業入力禁止</span><br/>
+                        勤務表に残業時間が入力されていたら即NGとします。
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* 4. その他のチェック */}
+              <section>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
+                   4. 特殊な不整合チェック項目
+                </h3>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <li className="bg-rose-50 p-3 rounded-lg border border-rose-100 text-rose-800">
+                     <span className="font-bold block mb-1">■ 日報 H列チェック (H214～221)</span>
+                     日報(印刷用形式)の隠しエリア等にある特定セルに「0以外」の値が入っている場合、「H列不整合」として警告を出します。
+                   </li>
+                   <li className="bg-amber-50 p-3 rounded-lg border border-amber-100 text-amber-800">
+                     <span className="font-bold block mb-1">■ 時間年休＋残業の重複</span>
+                     勤務表で「時間年休」を取得している日に、「時間外(残業)」も計上されている場合、「年休+残業NG」として警告します。
+                   </li>
                 </ul>
               </section>
 
+              {/* 5. 設定ファイル */}
+              <section>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
+                   5. 設定機能の使い方
+                </h3>
+                <div className="space-y-3">
+                  <p>画面右上の「設定」ボタンから、以下の項目を登録・保存できます。</p>
+                  <ul className="list-disc list-inside ml-4 space-y-1">
+                    <li><strong>管理職リスト:</strong> 夜業時の8h加算を行わない対象者。</li>
+                    <li><strong>フレックス対象者:</strong> 残業合算比較を行う対象者。</li>
+                    <li><strong>旧姓マッピング:</strong> 日報(旧姓)と勤務表(新姓)を自動的に紐付けるための対照表。</li>
+                  </ul>
+                  <div className="flex gap-4 mt-2">
+                    <div className="flex-1 bg-slate-50 p-3 rounded text-xs">
+                      <strong>保存 (Export):</strong><br/>
+                      現在の設定内容を <code>attendance_settings.json</code> というファイルに書き出します。次回利用時に読み込むことで設定を復元できます。
+                    </div>
+                    <div className="flex-1 bg-slate-50 p-3 rounded text-xs">
+                      <strong>読込 (Import):</strong><br/>
+                      保存しておいたJSONファイルを読み込み、設定を反映させます。読み込み後、表示中のデータは即座に再計算されます。
+                    </div>
+                  </div>
+                </div>
+              </section>
+
             </div>
-            <div className="p-4 border-t bg-slate-50 text-right">
-              <button onClick={onClose} className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700">閉じる</button>
+            <div className="p-6 border-t bg-slate-50 text-right">
+              <button onClick={onClose} className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all">閉じる</button>
             </div>
           </div>
         </div>
@@ -238,6 +316,11 @@
         reader.onload = (ev) => {
           try {
             const data = JSON.parse(ev.target.result);
+            // 呼び出し元の handleSaveSettings を経由させるため、onSave は使わず
+            // ここで読み込んだデータを一時的に親コンポーネントへ渡す仕組みが必要だが
+            // シンプルに、onSave経由で更新する
+            onSave(data);
+            // モーダル内のstateも更新
             if (data.managers) setManagersText(data.managers.join('\n'));
             if (data.flexEmployees) setFlexText(data.flexEmployees.join('\n'));
             if (data.nameMappings) setMappings(data.nameMappings);
@@ -264,18 +347,16 @@
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <h3 className="font-bold text-sm text-slate-700 mb-2">管理職リスト</h3>
-                  <p className="text-xs text-slate-500 mb-2">夜業時の所定内8h加算なし</p>
                   <textarea value={managersText} onChange={e => setManagersText(e.target.value)} className="w-full h-32 p-3 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50" placeholder="氏名(1行1名)" />
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-slate-700 mb-2">フレックス対象者</h3>
-                  <p className="text-xs text-slate-500 mb-2">勤務表所定 = 日報(所定+残業)</p>
                   <textarea value={flexText} onChange={e => setFlexText(e.target.value)} className="w-full h-32 p-3 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50" placeholder="氏名(1行1名)" />
                 </div>
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-700 mb-2">旧姓・別名マッピング</h3>
-                <p className="text-xs text-slate-500 mb-2">日報(旧姓) → 勤務表(新姓) に変換</p>
+                <p className="text-xs text-slate-500 mb-2">日報(旧姓) → 勤務表(新姓) に変換<br/><span className="text-rose-500">※設定適用後、すべてのデータが再計算されます。</span></p>
                 <div className="space-y-2">
                   {mappings.map((m, i) => (
                     <div key={i} className="flex gap-2 items-center">
@@ -321,36 +402,34 @@
             const { rows, fileName } = await this.parseFile(file);
             const contentStr = rows.slice(0, 15).map(r => r.join(' ')).join(' ');
             
-            let year = new Date().getFullYear();
-            let month = new Date().getMonth() + 1;
-            const ymMatch = contentStr.match(/(\d{4})年\s*(\d{1,2})月/) || contentStr.match(/年度\s*(\d{4})\s*,\s*月度\s*(\d{1,2})/);
-            if (ymMatch) {
-              year = parseInt(ymMatch[1]);
-              month = parseInt(ymMatch[2]);
-            }
-
             const isDailyReportData = contentStr.includes('工事番号') && contentStr.includes('所定内') && !contentStr.includes('行番号');
             const isDailyReportPrint = contentStr.includes('勤務日報') && (contentStr.includes('行番号') || fileName.includes('印刷用') || fileName.toLowerCase().endsWith('.xls'));
             const isSchedule = contentStr.includes('勤務表') || (contentStr.includes('日付') && contentStr.includes('勤務状況'));
 
-            const context = { year, month };
-
-            if (isDailyReportData) this.parseDailyReport_DataFormat(rows, employees, settings, context);
-            else if (isDailyReportPrint) this.parseDailyReport_PrintFormat(rows, employees, settings, context);
-            else if (isSchedule) this.parseSchedule(rows, employees, settings, context);
+            if (isDailyReportData) this.parseDailyReport_DataFormat(rows, employees, settings);
+            else if (isDailyReportPrint) this.parseDailyReport_PrintFormat(rows, employees, settings);
+            else if (isSchedule) this.parseSchedule(rows, employees, settings);
           } catch (e) { console.error(e); }
         }
         return employees;
       }
+
+      // --- 名寄せロジック ---
       resolveEmployee(employees, id, name, settings) {
         const normId = normalizeId(id);
         const normName = normalizeName(name);
+
+        // 1. IDで完全一致があればそれを返す
         if (normId && employees[normId]) return normId;
+
+        // 2. 名前解決のターゲット決定
         let targetCanonicalName = normName;
         if (settings && settings.nameMappings) {
           const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === normName || normalizeName(m.kintai) === normName);
           if (mapping) targetCanonicalName = normalizeName(mapping.kintai);
         }
+
+        // 3. 既存データから名前で探す
         const foundId = Object.keys(employees).find(key => {
           const emp = employees[key];
           const empNameNorm = normalizeName(emp.employeeName);
@@ -361,20 +440,18 @@
           }
           return empCanonicalName === targetCanonicalName;
         });
-        return foundId || normId || `TEMP-${targetCanonicalName}`;
+
+        if (foundId) return foundId;
+
+        // 4. 新規
+        return normId || `TEMP-${targetCanonicalName}`;
       }
-      initEmployee(employees, id, name, year, month) {
+
+      initEmployee(employees, id, name) {
         if (!employees[id]) {
-          employees[id] = { 
-            employeeId: id, 
-            employeeName: name || `Employee-${id}`, 
-            schedule: [], report: [], 
-            year: year, month: month, 
-            warnings: [] 
-          };
+          employees[id] = { employeeId: id, employeeName: name || `Employee-${id}`, schedule: [], report: [], warnings: [] };
         } else {
           if (name && !employees[id].employeeName.match(/^[^\s]+$/)) employees[id].employeeName = name;
-          if (!employees[id].year && year) { employees[id].year = year; employees[id].month = month; }
         }
       }
       upsertRecord(array, record) {
@@ -395,7 +472,7 @@
           };
         } else { array.push(record); }
       }
-      parseSchedule(rows, employees, settings, ctx) {
+      parseSchedule(rows, employees, settings) {
         let currentEmployeeId = null;
         let currentEmployeeName = null;
         let colMap = null;
@@ -408,7 +485,7 @@
               const rawName = rowStr.match(/(?:氏名|氏　名)[\s:：]*([^\s,0-9]+(?:\s+[^\s,0-9]+)?)/)?.[1];
               currentEmployeeId = this.resolveEmployee(employees, idMatch[1], rawName, settings);
               currentEmployeeName = normalizeName(rawName);
-              this.initEmployee(employees, currentEmployeeId, currentEmployeeName, ctx.year, ctx.month);
+              this.initEmployee(employees, currentEmployeeId, currentEmployeeName);
             }
           }
           if (!colMap && (row.includes('日付') || row.includes('勤務状況'))) {
@@ -468,8 +545,7 @@
           }
         }
       }
-      
-      parseDailyReport_DataFormat(rows, employees, settings, ctx) {
+      parseDailyReport_DataFormat(rows, employees, settings) {
         let currentEmployeeId = null;
         let colMap = null;
         let headerRowIdx = -1;
@@ -481,7 +557,7 @@
             if (idIdx !== -1 && row[idIdx + 1]) {
               const rawName = (nameIdx !== -1 && row[nameIdx + 1]) ? String(row[nameIdx + 1]) : '';
               currentEmployeeId = this.resolveEmployee(employees, row[idIdx + 1], rawName, settings);
-              this.initEmployee(employees, currentEmployeeId, normalizeName(rawName), ctx.year, ctx.month);
+              this.initEmployee(employees, currentEmployeeId, normalizeName(rawName));
             }
           }
           if (row.includes('工事番号') && row.includes('所定内')) {
@@ -514,8 +590,7 @@
           }
         }
       }
-      
-      parseDailyReport_PrintFormat(rows, employees, settings, ctx) {
+      parseDailyReport_PrintFormat(rows, employees, settings) {
         let currentEmployeeId = null;
         const COL = { DATE: 3, REGULAR: 26, OVERTIME: 29, NIGHT: 32, HOLIDAY: 35, NAME: 32 };
         let rawName = '';
@@ -527,7 +602,7 @@
         }
         if (!currentEmployeeId && rawName) currentEmployeeId = this.resolveEmployee(employees, null, rawName, settings);
         if (!currentEmployeeId) return;
-        this.initEmployee(employees, currentEmployeeId, normalizeName(rawName), ctx.year, ctx.month);
+        this.initEmployee(employees, currentEmployeeId, normalizeName(rawName));
 
         for(let r = 213; r <= 220; r++) {
           if (rows[r] && parseFloat(rows[r][7]) !== 0 && !isNaN(parseFloat(rows[r][7]))) {
@@ -565,7 +640,7 @@
       const [view, setView] = useState('input');
       const [showSettings, setShowSettings] = useState(false);
       const [showHelp, setShowHelp] = useState(false);
-      const [checkMode, setCheckMode] = useState('full'); // 'full' or 'day20'
+      const [checkMode, setCheckMode] = useState('full');
       const [settings, setSettings] = useState({ managers: [], flexEmployees: [], nameMappings: [] });
       const [mismatchListOpen, setMismatchListOpen] = useState(false);
       const fileInputRef = useRef(null);
@@ -582,7 +657,43 @@
       const onFileChange = (e) => setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
       const removeFile = (index) => setFiles(prev => prev.filter((_, i) => i !== index));
 
-      // 共通: 不整合チェック (limitDay対応)
+      // --- 設定変更時の再計算ロジック ---
+      const recalcEmployees = useCallback((currentEmployees, newSettings) => {
+        const newEmployees = {};
+        const parser = new AttendanceFileParser(null);
+
+        Object.values(currentEmployees).forEach(emp => {
+          const rawId = emp.employeeId.startsWith('TEMP-') ? null : emp.employeeId;
+          const rawName = emp.employeeName;
+          
+          const targetId = parser.resolveEmployee(newEmployees, rawId, rawName, newSettings);
+          
+          let targetName = normalizeName(rawName);
+          if (newSettings.nameMappings) {
+            const m = newSettings.nameMappings.find(map => 
+              normalizeName(map.nippo) === targetName || normalizeName(map.kintai) === targetName
+            );
+            if (m) targetName = normalizeName(m.nippo); 
+          }
+
+          if (!newEmployees[targetId]) {
+            parser.initEmployee(newEmployees, targetId, targetName);
+          }
+
+          const targetEmp = newEmployees[targetId];
+          emp.schedule.forEach(r => parser.upsertRecord(targetEmp.schedule, r));
+          emp.report.forEach(r => parser.upsertRecord(targetEmp.report, r));
+          if (emp.warnings) targetEmp.warnings = [...new Set([...(targetEmp.warnings || []), ...emp.warnings])];
+        });
+        return newEmployees;
+      }, []);
+
+      const handleSaveSettings = (newSettings) => {
+        setSettings(newSettings);
+        setEmployees(prev => recalcEmployees(prev, newSettings));
+      };
+
+
       const checkDailyMismatch = (sch, rep, isManager, isFlex) => {
         let diffOvertime = (sch.overtime || 0) - (rep.overtime || 0);
         let diffRegular = (sch.regularTime || 0) - (rep.regularTime || 0);
@@ -748,7 +859,7 @@
           <header className="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.7.0)</h1><p className="text-xs text-slate-500 font-medium">20日締めモード・ヘルプ・H列チェック</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.7.2)</h1><p className="text-xs text-slate-500 font-medium">B列曜日表示・加休ハッチング対応（厳格版）</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -764,7 +875,6 @@
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
-                    {/* ... (Upload UI) ... */}
                     <div className="flex items-center gap-2 mb-4"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><FileSpreadsheet className="w-5 h-5" /></div><h2 className="font-bold">ファイルアップロード</h2></div>
                     <div className="flex gap-4">
                       <div className={`flex-1 border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center transition-all cursor-pointer group ${!xlsx ? 'opacity-50 pointer-events-none' : 'hover:border-indigo-400 hover:bg-indigo-50/50'}`} onClick={() => fileInputRef.current?.click()}>
@@ -778,24 +888,8 @@
                         <p className="text-sm font-bold text-slate-600">フォルダを選択</p>
                       </div>
                     </div>
-                    
-                    {files.length > 0 && (
-                      <>
-                        <div className="mt-4 flex justify-between items-center text-sm font-bold text-slate-500 border-b pb-2">
-                          <span>選択中のファイル ({files.length})</span>
-                          <button onClick={() => setFiles([])} className="text-xs text-rose-500 hover:underline">すべて削除</button>
-                        </div>
-                        <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">{files.map((file, idx) => (<div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 text-sm"><span className="font-bold text-slate-700 truncate flex items-center gap-2"><FileText className="w-4 h-4 text-indigo-500" />{file.name}</span><button onClick={() => removeFile(idx)} className="text-slate-400 hover:text-rose-500 p-2"><X className="w-4 h-4" /></button></div>))}</div>
-                      </>
-                    )}
+                    {files.length > 0 && <div className="mt-4 space-y-2 max-h-40 overflow-y-auto">{files.map((file, idx) => (<div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 text-sm"><span className="font-bold text-slate-700 truncate flex items-center gap-2"><FileText className="w-4 h-4 text-indigo-500" />{file.name}</span><button onClick={() => removeFile(idx)} className="text-slate-400 hover:text-rose-500 p-2"><X className="w-4 h-4" /></button></div>))}</div>}
                   </div>
-                  
-                  {/* チェックモード選択 */}
-                  <div className="flex justify-center bg-white p-2 rounded-xl shadow-sm border border-slate-200">
-                    <button onClick={() => setCheckMode('full')} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all ${checkMode === 'full' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>通常 (月末まで)</button>
-                    <button onClick={() => setCheckMode('day20')} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${checkMode === 'day20' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><CalendarCheck className="w-4 h-4" /> 20日締め</button>
-                  </div>
-
                   <button onClick={handleProcess} disabled={isProcessing || files.length === 0} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-black rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl shadow-indigo-200 active:scale-95">{isProcessing ? <><Loader2 className="w-6 h-6 animate-spin" />解析中...</> : <><Table className="w-6 h-6" />解析を実行</>}</button>
                 </div>
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 h-fit"><h3 className="font-bold mb-4 flex items-center gap-2 border-b pb-4"><Users className="w-5 h-5 text-indigo-600" />解析済みデータ ({employeeList.length})</h3>
@@ -814,6 +908,13 @@
                     {mismatchListOpen && employeeSummary.mismatchEmployees.length > 0 && <div className="mt-2 p-2 bg-white border border-rose-100 rounded-xl shadow-sm grid grid-cols-2 md:grid-cols-4 gap-2">{employeeSummary.mismatchEmployees.map(emp => (<button key={emp.employeeId} onClick={() => selectEmployeeByKey(emp)} className="text-left px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg truncate flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block flex-shrink-0"></span>{emp.employeeName}{emp.warnings && emp.warnings.includes('H列不整合') && <span className="text-[9px] bg-black text-white px-1 rounded">H列</span>}</button>))}</div>}
                   </div>
                 </div>
+                
+                {/* チェックモード選択 */}
+                <div className="flex justify-center bg-white p-2 rounded-xl shadow-sm border border-slate-200">
+                  <button onClick={() => setCheckMode('full')} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all ${checkMode === 'full' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>通常 (月末まで)</button>
+                  <button onClick={() => setCheckMode('day20')} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${checkMode === 'day20' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><CalendarCheck className="w-4 h-4" /> 20日締め</button>
+                </div>
+
                 <div className="flex flex-col lg:flex-row gap-6">
                   <aside className="w-full lg:w-64 space-y-2 shrink-0 max-h-[80vh] overflow-y-auto">
                     <h3 className="text-[10px] font-black text-slate-400 px-3 py-1 uppercase tracking-widest flex justify-between items-center">
@@ -932,7 +1033,7 @@
               </div>
             )}
           </main>
-          <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} settings={settings} onSave={setSettings} />
+          <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} settings={settings} onSave={handleSaveSettings} />
           <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
         </div>
       );
