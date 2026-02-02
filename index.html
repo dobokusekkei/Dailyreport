@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.7.2)</title>
+  <title>勤怠・日報比較ツール (Ver.7.3)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -29,6 +29,21 @@
     }
     .modal-overlay {
       animation: fadeIn 0.2s ease-out;
+    }
+    /* スクロールバーのカスタマイズ */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
     }
   </style>
 </head>
@@ -110,7 +125,7 @@
       return String(name).replace(/[\s\u3000]+/g, '');
     };
 
-    // --- ヘルプモーダル (内容拡充版) ---
+    // --- ヘルプモーダル ---
     const HelpModal = ({ isOpen, onClose }) => {
       if (!isOpen) return null;
       return (
@@ -121,12 +136,8 @@
               <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6" /></button>
             </div>
             <div className="p-8 overflow-y-auto text-sm leading-relaxed text-slate-700 space-y-8">
-
-              {/* 1. ファイル形式 */}
               <section>
-                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
-                   1. 対応ファイル形式
-                </h3>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">1. 対応ファイル形式</h3>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                   <ul className="list-disc list-inside space-y-2">
                     <li><strong>勤務表:</strong> <code className="bg-white px-2 py-1 rounded border">.xlsx</code> (Excelブック) または <code className="bg-white px-2 py-1 rounded border">.csv</code></li>
@@ -136,12 +147,8 @@
                   </ul>
                 </div>
               </section>
-
-              {/* 2. 時間計算ルール */}
               <section>
-                 <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
-                   2. 時間の読み取りと計算
-                </h3>
+                 <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">2. 時間の読み取りと計算</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <h4 className="font-bold text-indigo-600 mb-2">独自フォーマット (60進法)</h4>
@@ -162,12 +169,8 @@
                   </div>
                 </div>
               </section>
-
-              {/* 3. 判定ロジック */}
               <section>
-                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
-                   3. 社員属性ごとの判定ロジック
-                </h3>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">3. 社員属性ごとの判定ロジック</h3>
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-indigo-50 text-indigo-900">
@@ -209,12 +212,8 @@
                   </tbody>
                 </table>
               </section>
-
-              {/* 4. その他のチェック */}
               <section>
-                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
-                   4. 特殊な不整合チェック項目
-                </h3>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">4. 特殊な不整合チェック項目</h3>
                 <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
                    <li className="bg-rose-50 p-3 rounded-lg border border-rose-100 text-rose-800">
                      <span className="font-bold block mb-1">■ 日報 H列チェック (H214～221)</span>
@@ -226,12 +225,8 @@
                    </li>
                 </ul>
               </section>
-
-              {/* 5. 設定ファイル */}
               <section>
-                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">
-                   5. 設定機能の使い方
-                </h3>
+                <h3 className="text-lg font-bold text-slate-800 border-b-2 border-indigo-100 pb-2 mb-3 flex items-center gap-2">5. 設定機能の使い方</h3>
                 <div className="space-y-3">
                   <p>画面右上の「設定」ボタンから、以下の項目を登録・保存できます。</p>
                   <ul className="list-disc list-inside ml-4 space-y-1">
@@ -251,7 +246,6 @@
                   </div>
                 </div>
               </section>
-
             </div>
             <div className="p-6 border-t bg-slate-50 text-right">
               <button onClick={onClose} className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all">閉じる</button>
@@ -316,11 +310,7 @@
         reader.onload = (ev) => {
           try {
             const data = JSON.parse(ev.target.result);
-            // 呼び出し元の handleSaveSettings を経由させるため、onSave は使わず
-            // ここで読み込んだデータを一時的に親コンポーネントへ渡す仕組みが必要だが
-            // シンプルに、onSave経由で更新する
             onSave(data);
-            // モーダル内のstateも更新
             if (data.managers) setManagersText(data.managers.join('\n'));
             if (data.flexEmployees) setFlexText(data.flexEmployees.join('\n'));
             if (data.nameMappings) setMappings(data.nameMappings);
@@ -418,18 +408,12 @@
       resolveEmployee(employees, id, name, settings) {
         const normId = normalizeId(id);
         const normName = normalizeName(name);
-
-        // 1. IDで完全一致があればそれを返す
         if (normId && employees[normId]) return normId;
-
-        // 2. 名前解決のターゲット決定
         let targetCanonicalName = normName;
         if (settings && settings.nameMappings) {
           const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === normName || normalizeName(m.kintai) === normName);
           if (mapping) targetCanonicalName = normalizeName(mapping.kintai);
         }
-
-        // 3. 既存データから名前で探す
         const foundId = Object.keys(employees).find(key => {
           const emp = employees[key];
           const empNameNorm = normalizeName(emp.employeeName);
@@ -440,13 +424,8 @@
           }
           return empCanonicalName === targetCanonicalName;
         });
-
-        if (foundId) return foundId;
-
-        // 4. 新規
-        return normId || `TEMP-${targetCanonicalName}`;
+        return foundId || normId || `TEMP-${targetCanonicalName}`;
       }
-
       initEmployee(employees, id, name) {
         if (!employees[id]) {
           employees[id] = { employeeId: id, employeeName: name || `Employee-${id}`, schedule: [], report: [], warnings: [] };
@@ -845,9 +824,14 @@
             else if (weekday.includes('日')) { rowColor = 'bg-red-50'; } 
             else if (weekday.includes('土')) { rowColor = 'bg-blue-50'; }
 
+            const hasNightWork = (rep.nightTime > 0) || (rep.status === '夜業') || (rep.status === '出勤' && rep.nightTime > 0);
+
             return { 
               day, weekday, rowColor,
-              sch, rep, ...check, hasData: sch.status || rep.status || sch.overtime > 0 || rep.overtime > 0 || sch.regularTime > 0 || rep.regularTime > 0, hasHolidayWork: rep.holidayWork > 0 
+              sch, rep, ...check, 
+              hasData: sch.status || rep.status || sch.overtime > 0 || rep.overtime > 0 || sch.regularTime > 0 || rep.regularTime > 0, 
+              hasHolidayWork: rep.holidayWork > 0,
+              hasNightWork
             };
           }).filter(d => d.hasData);
       }, [currentEmployee, settings, checkMode]);
@@ -855,11 +839,11 @@
       const selectEmployeeByKey = (emp) => setSelectedId(Object.keys(employees).find(k => employees[k] === emp));
 
       return (
-        <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-8 pb-20">
-          <header className="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-8 pb-20 flex flex-col overflow-hidden h-screen">
+          <header className="shrink-0 max-w-7xl mx-auto w-full mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.7.2)</h1><p className="text-xs text-slate-500 font-medium">B列曜日表示・加休ハッチング対応（厳格版）</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.7.3)</h1><p className="text-xs text-slate-500 font-medium">B列曜日表示・加休ハッチ・スクロール固定・夜業ラベル</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -870,9 +854,10 @@
               </div>
             </div>
           </header>
-          <main className="max-w-7xl mx-auto">
+          
+          <main className="flex-1 w-full max-w-7xl mx-auto overflow-hidden flex flex-col min-h-0">
             {view === 'input' ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto">
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
                     <div className="flex items-center gap-2 mb-4"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><FileSpreadsheet className="w-5 h-5" /></div><h2 className="font-bold">ファイルアップロード</h2></div>
@@ -897,30 +882,30 @@
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-6">
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-6 items-start">
+              <div className="flex flex-col gap-4 h-full overflow-hidden">
+                <div className="shrink-0 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-6 items-start">
                   <div className="flex gap-4 p-2"><div className="text-center px-4 border-r"><div className="text-xs text-slate-400 font-bold mb-1">管理職</div><div className="text-2xl font-black text-slate-700">{employeeSummary.managerCount} <span className="text-sm font-normal text-slate-400">名</span></div></div><div className="text-center px-4"><div className="text-xs text-slate-400 font-bold mb-1">一般社員</div><div className="text-2xl font-black text-slate-700">{employeeSummary.generalCount} <span className="text-sm font-normal text-slate-400">名</span></div></div></div>
                   <div className="flex-1 w-full">
                     <div className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors ${employeeSummary.mismatchEmployees.length > 0 ? 'bg-rose-50 hover:bg-rose-100 text-rose-800' : 'bg-emerald-50 text-emerald-800'}`} onClick={() => setMismatchListOpen(!mismatchListOpen)}>
                       <div className="flex items-center gap-2 font-bold">{employeeSummary.mismatchEmployees.length > 0 ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}不整合あり: {employeeSummary.mismatchEmployees.length} 名 {checkMode === 'day20' && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full ml-2">20日〆</span>}</div>
                       <ChevronRight className={`w-5 h-5 transition-transform ${mismatchListOpen ? 'rotate-90' : ''}`} />
                     </div>
-                    {mismatchListOpen && employeeSummary.mismatchEmployees.length > 0 && <div className="mt-2 p-2 bg-white border border-rose-100 rounded-xl shadow-sm grid grid-cols-2 md:grid-cols-4 gap-2">{employeeSummary.mismatchEmployees.map(emp => (<button key={emp.employeeId} onClick={() => selectEmployeeByKey(emp)} className="text-left px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg truncate flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block flex-shrink-0"></span>{emp.employeeName}{emp.warnings && emp.warnings.includes('H列不整合') && <span className="text-[9px] bg-black text-white px-1 rounded">H列</span>}</button>))}</div>}
+                    {mismatchListOpen && employeeSummary.mismatchEmployees.length > 0 && <div className="mt-2 p-2 bg-white border border-rose-100 rounded-xl shadow-sm grid grid-cols-2 md:grid-cols-4 gap-2 max-h-32 overflow-y-auto">{employeeSummary.mismatchEmployees.map(emp => (<button key={emp.employeeId} onClick={() => selectEmployeeByKey(emp)} className="text-left px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg truncate flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block flex-shrink-0"></span>{emp.employeeName}{emp.warnings && emp.warnings.includes('H列不整合') && <span className="text-[9px] bg-black text-white px-1 rounded">H列</span>}</button>))}</div>}
                   </div>
                 </div>
                 
-                {/* チェックモード選択 */}
-                <div className="flex justify-center bg-white p-2 rounded-xl shadow-sm border border-slate-200">
-                  <button onClick={() => setCheckMode('full')} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all ${checkMode === 'full' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>通常 (月末まで)</button>
-                  <button onClick={() => setCheckMode('day20')} className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${checkMode === 'day20' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><CalendarCheck className="w-4 h-4" /> 20日締め</button>
+                <div className="shrink-0 flex justify-center bg-white p-2 rounded-xl shadow-sm border border-slate-200">
+                  <button onClick={() => setCheckMode('full')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-all ${checkMode === 'full' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>通常 (月末まで)</button>
+                  <button onClick={() => setCheckMode('day20')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${checkMode === 'day20' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><CalendarCheck className="w-4 h-4" /> 20日締め</button>
                 </div>
 
-                <div className="flex flex-col lg:flex-row gap-6">
-                  <aside className="w-full lg:w-64 space-y-2 shrink-0 max-h-[80vh] overflow-y-auto">
-                    <h3 className="text-[10px] font-black text-slate-400 px-3 py-1 uppercase tracking-widest flex justify-between items-center">
+                <div className="flex-1 flex gap-6 overflow-hidden min-h-0">
+                  <aside className="w-64 shrink-0 overflow-y-auto pr-2 pb-4">
+                    <h3 className="text-[10px] font-black text-slate-400 px-3 py-1 uppercase tracking-widest flex justify-between items-center sticky top-0 bg-slate-50 z-10">
                       Employee List
                       {checkMode === 'day20' && <span className="text-[9px] bg-amber-500 text-white px-1 rounded">20日〆</span>}
                     </h3>
+                    <div className="space-y-2">
                     {employeeList.map((emp) => {
                       const key = Object.keys(employees).find(k => employees[k] === emp);
                       const isMismatch = employeeSummary.mismatchEmployees.includes(emp);
@@ -938,13 +923,14 @@
 
                       return (<button key={key} onClick={() => setSelectedId(key)} className={`w-full p-3 rounded-2xl text-left transition-all flex items-center justify-between border ${selectedId === key ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg scale-105 z-10' : 'bg-white border-slate-200 hover:bg-slate-50'}`}><div className="truncate flex-1"><div className={`text-[9px] font-mono ${selectedId === key ? 'text-indigo-200' : 'text-slate-400'}`}>{emp.employeeId}</div><div className="font-bold truncate text-sm flex items-center gap-1">{emp.employeeName}{isManager && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 rounded">管</span>}{isFlex && <span className="text-[9px] bg-orange-100 text-orange-700 px-1 rounded">F</span>}{isMismatch && <span className="w-2 h-2 rounded-full bg-rose-500"></span>}</div></div><ChevronRight className={`w-4 h-4 shrink-0 ${selectedId === key ? 'opacity-100' : 'opacity-20'}`} /></button>);
                     })}
+                    </div>
                   </aside>
-                  <div className="flex-1 space-y-4">
+                  <div className="flex-1 flex flex-col overflow-hidden min-h-0">
                     {!currentEmployee ? (
-                      <div className="bg-white h-[400px] rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400"><p className="font-bold text-sm">社員を選択してください</p></div>
+                      <div className="bg-white h-full rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400"><p className="font-bold text-sm">社員を選択してください</p></div>
                     ) : (
                       <>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="shrink-0 grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
                             <div className="text-[10px] font-black text-slate-400 uppercase mb-2">所定内 勤務時間</div>
                             <div className="flex justify-between items-end mb-1">
@@ -956,7 +942,7 @@
                                 </span>
                               </div>
                             </div>
-                            <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffRegular, 0)) > 0.01 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                            <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffRegular, 0)) > 0.01 ? 'text-rose-600' : 'text-emerald-600'}`}>
                               {settings.flexEmployees.includes(normalizeName(currentEmployee.employeeName)) ? 'FLEX判定' : `Diff: ${formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffRegular, 0))}`}
                             </div>
                           </div>
@@ -966,7 +952,7 @@
                               <div><span className="text-xs text-slate-400 block">勤務表</span><span className="text-xl font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.sch.overtime || 0), 0))}</span></div>
                               <div className="text-right"><span className="text-xs text-slate-400 block">日報</span><span className="text-xl font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.rep.overtime || 0), 0))}</span></div>
                             </div>
-                            <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffOvertime, 0)) > 0.01 ? 'text-rose-500' : 'text-emerald-500'}`}>Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffOvertime, 0))}</div>
+                            <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffOvertime, 0)) > 0.01 ? 'text-rose-600' : 'text-emerald-600'}`}>Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffOvertime, 0))}</div>
                           </div>
                           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
                             <div className="text-[10px] font-black text-slate-400 uppercase mb-2">深夜時間</div>
@@ -974,21 +960,21 @@
                               <div><span className="text-xs text-slate-400 block">勤務表</span><span className="text-xl font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.sch.nightTime || 0), 0))}</span></div>
                               <div className="text-right"><span className="text-xs text-slate-400 block">日報</span><span className="text-xl font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.reduce((acc, d) => acc + (d.rep.nightTime || 0), 0))}</span></div>
                             </div>
-                            <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffNight, 0)) > 0.01 ? 'text-rose-500' : 'text-emerald-500'}`}>Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffNight, 0))}</div>
+                            <div className={`text-right text-xs font-bold ${Math.abs(comparisonData.reduce((acc, d) => acc + d.diffNight, 0)) > 0.01 ? 'text-rose-600' : 'text-emerald-600'}`}>Diff: {formatSpecialTime(comparisonData.reduce((acc, d) => acc + d.diffNight, 0))}</div>
                           </div>
                         </div>
                         
                         {currentEmployee.warnings && currentEmployee.warnings.length > 0 && (
-                          <div className="mt-4 p-3 bg-red-100 border border-red-200 text-red-800 rounded-xl text-sm font-bold flex gap-2 items-center">
+                          <div className="shrink-0 mb-4 p-3 bg-red-100 border border-red-200 text-red-800 rounded-xl text-sm font-bold flex gap-2 items-center">
                             <AlertTriangle className="w-5 h-5"/>
                             重要警告: {currentEmployee.warnings.join(', ')}
                           </div>
                         )}
 
-                        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-6">
-                          <div className="overflow-x-auto">
+                        <div className="flex-1 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-0">
+                          <div className="overflow-y-auto flex-1">
                             <table className="w-full text-left border-collapse">
-                              <thead>
+                              <thead className="sticky top-0 bg-white z-10 shadow-sm">
                                 <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                                   <th className="px-4 py-4 w-20 text-center">Date</th>
                                   <th className="px-4 py-4 border-l bg-slate-100/50">項目</th>
@@ -998,7 +984,7 @@
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 text-xs">
-                                {comparisonData.map(({ day, weekday, rowColor, sch, rep, diffOvertime, diffRegular, diffNight, hasHolidayWork, isSpecialCase, warningMessage }) => {
+                                {comparisonData.map(({ day, weekday, rowColor, sch, rep, diffOvertime, diffRegular, diffNight, hasHolidayWork, hasNightWork, isSpecialCase, warningMessage }) => {
                                   const statusColor = sch.status?.includes('休') ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600';
                                   const isFlex = settings.flexEmployees.includes(normalizeName(currentEmployee.employeeName)) || (settings.nameMappings && settings.nameMappings.some(m => normalizeName(m.nippo) === normalizeName(currentEmployee.employeeName) && settings.flexEmployees.includes(normalizeName(m.kintai))));
                                   
@@ -1009,14 +995,14 @@
                                       </td>
                                       <td className="px-4 py-4 border-l bg-slate-50/30"><div className="flex flex-col gap-2"><span className="text-[10px] font-bold text-slate-400 uppercase">ステータス</span><span className="text-[10px] font-bold text-slate-400 uppercase">時間帯</span><span className="text-[10px] font-bold text-slate-400 uppercase">所定内</span><span className="text-[10px] font-bold text-slate-400 uppercase">時間外</span><span className="text-[10px] font-bold text-slate-400 uppercase">深夜</span><span className="text-[10px] font-bold text-slate-400 uppercase">時間年休</span></div></td>
                                       <td className="px-4 py-4 border-l"><div className="flex flex-col gap-2"><div className="h-5">{sch.status && <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${statusColor}`}>{sch.status}</span>}</div><div className="font-mono h-4 text-slate-600">{sch.startTime ? `${sch.startTime}-${sch.endTime}` : '-'}</div><div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.regularTime)}</div><div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.overtime)}</div><div className="font-mono text-slate-400">{formatSpecialTime(sch.nightTime)}</div><div className="font-mono text-slate-400 text-[10px]">{sch.timeAnnualLeave > 0 ? formatSpecialTime(sch.timeAnnualLeave) : '-'}</div></div></td>
-                                      <td className="px-4 py-4 border-l"><div className="flex flex-col gap-2"><div className="h-5">{hasHolidayWork && <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-700">休出あり</span>}</div><div className="font-mono h-4 text-slate-400 text-[10px]">{rep.startTime ? '記録あり' : '-'}</div><div className="font-mono font-bold text-blue-600">{formatSpecialTime(isFlex ? (rep.regularTime || 0) + (rep.overtime || 0) : rep.regularTime)}</div><div className="font-mono font-bold text-blue-600">{isFlex ? '-' : formatSpecialTime(rep.overtime)}</div><div className="font-mono text-slate-400">{formatSpecialTime(rep.nightTime)}</div><div className="h-4"></div></div></td>
+                                      <td className="px-4 py-4 border-l"><div className="flex flex-col gap-2"><div className="h-5 flex gap-1">{hasHolidayWork && <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-700">休出あり</span>}{hasNightWork && <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-yellow-900 text-white">夜業</span>}</div><div className="font-mono h-4 text-slate-400 text-[10px]">{rep.startTime ? '記録あり' : '-'}</div><div className="font-mono font-bold text-blue-600">{formatSpecialTime(isFlex ? (rep.regularTime || 0) + (rep.overtime || 0) : rep.regularTime)}</div><div className="font-mono font-bold text-blue-600">{isFlex ? '-' : formatSpecialTime(rep.overtime)}</div><div className="font-mono text-slate-400">{formatSpecialTime(rep.nightTime)}</div><div className="h-4"></div></div></td>
                                       <td className="px-4 py-4 border-l text-center align-middle"><div className="flex flex-col gap-2 items-center justify-center h-full"><div className="h-5"></div><div className="h-4"></div>
-                                        <div className={`font-mono font-bold flex items-center gap-1 ${Math.abs(diffRegular) > 0.01 || warningMessage ? (warningMessage ? 'text-amber-500' : 'text-rose-500') : 'text-emerald-500 opacity-20'}`}>
+                                        <div className={`font-mono font-bold flex items-center gap-1 ${Math.abs(diffRegular) > 0.01 || warningMessage ? (warningMessage ? 'text-amber-600' : 'text-rose-600') : 'text-emerald-600'}`}>
                                           {Math.abs(diffRegular) > 0.01 ? formatSpecialTime(diffRegular) : (isSpecialCase ? <span className="text-[9px] bg-emerald-100 text-emerald-600 px-1 rounded">夜業OK</span> : (warningMessage ? '確認' : 'OK'))}
                                           {warningMessage && <span title={warningMessage} className="text-amber-500 cursor-help"><AlertTriangle className="w-4 h-4"/></span>}
                                         </div>
-                                        <div className={`font-mono font-bold ${Math.abs(diffOvertime) > 0.01 ? 'text-rose-500' : 'text-emerald-500 opacity-20'}`}>{isFlex ? (sch.overtime > 0 ? 'NG' : 'OK') : (Math.abs(diffOvertime) > 0.01 ? formatSpecialTime(diffOvertime) : 'OK')}</div>
-                                        <div className={`font-mono font-bold ${Math.abs(diffNight) > 0.01 ? 'text-rose-500' : 'text-emerald-500 opacity-20'}`}>{Math.abs(diffNight) > 0.01 ? formatSpecialTime(diffNight) : 'OK'}</div>
+                                        <div className={`font-mono font-bold ${Math.abs(diffOvertime) > 0.01 ? 'text-rose-600' : 'text-emerald-600'}`}>{isFlex ? (sch.overtime > 0 ? 'NG' : 'OK') : (Math.abs(diffOvertime) > 0.01 ? formatSpecialTime(diffOvertime) : 'OK')}</div>
+                                        <div className={`font-mono font-bold ${Math.abs(diffNight) > 0.01 ? 'text-rose-600' : 'text-emerald-600'}`}>{Math.abs(diffNight) > 0.01 ? formatSpecialTime(diffNight) : 'OK'}</div>
                                         <div className="h-4"></div>
                                       </div></td>
                                     </tr>
