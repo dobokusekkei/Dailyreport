@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.9.2)</title>
+  <title>勤怠・日報比較ツール (Ver.9.3)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -401,15 +401,27 @@
         for (const file of files) {
           try {
             const { rows, fileName } = await this.parseFile(file);
-            const contentStr = rows.slice(0, 15).map(r => r.join(' ')).join(' ');
             
-            const isDailyReportData = contentStr.includes('工事番号') && contentStr.includes('所定内') && !contentStr.includes('行番号');
-            const isDailyReportPrint = contentStr.includes('勤務日報') && (contentStr.includes('行番号') || fileName.includes('印刷用') || fileName.toLowerCase().endsWith('.xls'));
-            const isSchedule = contentStr.includes('勤務表') || (contentStr.includes('日付') && contentStr.includes('勤務状況'));
+            let isSchedule = false;
+            if (fileName.includes('勤務表')) {
+               const m1Val = (rows.length > 0 && rows[0] && rows[0][12]) ? String(rows[0][12]) : '';
+               if (m1Val.includes('勤')) {
+                 isSchedule = true;
+               }
+            }
 
-            if (isDailyReportData) this.parseDailyReport_DataFormat(rows, employees, settings);
-            else if (isDailyReportPrint) this.parseDailyReport_PrintFormat(rows, employees, settings);
-            else if (isSchedule) this.parseSchedule(rows, employees, settings);
+            if (isSchedule) {
+              this.parseSchedule(rows, employees, settings);
+            } else {
+              const contentStr = rows.slice(0, 15).map(r => r.join(' ')).join(' ');
+              const isDailyReportData = contentStr.includes('工事番号') && contentStr.includes('所定内') && !contentStr.includes('行番号');
+              
+              if (isDailyReportData) {
+                this.parseDailyReport_DataFormat(rows, employees, settings);
+              } else {
+                this.parseDailyReport_PrintFormat(rows, employees, settings);
+              }
+            }
           } catch (e) { console.error(e); }
         }
         return employees;
@@ -459,7 +471,8 @@
             startTime: record.startTime || existing.startTime,
             endTime: record.endTime || existing.endTime,
             timeAnnualLeave: record.timeAnnualLeave || existing.timeAnnualLeave,
-            nightWorkVal: record.nightWorkVal || existing.nightWorkVal
+            nightWorkVal: record.nightWorkVal || existing.nightWorkVal,
+            special: record.special || existing.special
           };
         } else { array.push(record); }
       }
@@ -490,8 +503,12 @@
               nightBreak: row.findIndex(c => c && c.includes('深夜') && c.includes('休憩')),
               overtime: row.findIndex(c => c && c.includes('時間外') && !c.includes('法内') && !c.includes('深夜')),
               night: row.findIndex(c => c && c.includes('深夜') && !c.includes('休憩')),
+              special: 3, // デフォルトD列 (index 3)
               timeAnnualLeave: 14 
             };
+            const spIdx = row.findIndex(c => c && c.includes('特殊'));
+            if (spIdx !== -1) colMap.special = spIdx;
+
             if (colMap.day === -1) colMap.day = 0;
             if (colMap.weekday === -1) colMap.weekday = 1;
             if (colMap.nightBreak === -1) colMap.nightBreak = 12;
@@ -530,7 +547,8 @@
                 startTime: startStr ? String(startStr) : '',
                 endTime: endStr ? String(endStr) : '',
                 overtime, regularTime, timeAnnualLeave,
-                nightTime: parseSpecialTime(row[colMap.night])
+                nightTime: parseSpecialTime(row[colMap.night]),
+                special: String(row[colMap.special] || '')
               });
             }
           }
@@ -1007,7 +1025,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.2)</h1><p className="text-xs text-slate-500 font-medium">B列曜日表示・加休ハッチ・スクロール固定・夜業判定強化(F=7ベース)</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.3)</h1><p className="text-xs text-slate-500 font-medium">B列曜日表示・加休ハッチ・スクロール固定・夜業判定強化(F=7ベース)</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -1152,7 +1170,10 @@
                               </thead>
                               <tbody className="divide-y divide-slate-100 text-sm">
                                 {comparisonData.rows.map(({ day, weekday, rowColor, sch, rep, diffOvertime, diffRegular, diffNight, hasHolidayWork, hasNightWork, isSpecialCase, warningMessage, nextDayCheckOK, nightWorkCheckOK, nightWorkCheckNG, nightWorkMessage }) => {
-                                  const statusColor = sch.status?.includes('休') ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600';
+                                  let statusColor = 'bg-slate-100 text-slate-600';
+                                  if (sch.status?.includes('休')) {
+                                    statusColor = 'bg-rose-50 text-rose-600';
+                                  }
                                   const isFlex = comparisonData.isFlex;
                                   
                                   return (
@@ -1161,7 +1182,7 @@
                                         {day} <span className="text-sm ml-1">{weekday}</span>
                                       </td>
                                       <td className="px-2 py-2 border-l bg-slate-50/30"><div className="flex flex-col gap-1"><span className="text-xs font-bold text-slate-400 uppercase">ステータス</span><span className="text-xs font-bold text-slate-400 uppercase">時間帯</span><span className="text-xs font-bold text-slate-400 uppercase">所定内</span><span className="text-xs font-bold text-slate-400 uppercase">時間外</span><span className="text-xs font-bold text-slate-400 uppercase">深夜</span><span className="text-xs font-bold text-slate-400 uppercase">時間年休</span></div></td>
-                                      <td className="px-2 py-2 border-l"><div className="flex flex-col gap-1"><div className="h-5">{sch.status && <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${statusColor}`}>{sch.status}</span>}</div><div className="font-mono h-4 text-slate-600">{sch.startTime ? `${sch.startTime}-${sch.endTime}` : '-'}</div><div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.regularTime)}</div><div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.overtime)}</div><div className="font-mono text-slate-400">{formatSpecialTime(sch.nightTime)}</div><div className="font-mono text-slate-400 text-xs">{sch.timeAnnualLeave > 0 ? formatSpecialTime(sch.timeAnnualLeave) : '-'}</div></div></td>
+                                      <td className="px-2 py-2 border-l"><div className="flex flex-col gap-1"><div className="h-5 flex gap-1">{sch.status && <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${statusColor}`}>{sch.status}</span>}{sch.special?.includes('夜業') && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-yellow-900 text-white">夜業</span>}</div><div className="font-mono h-4 text-slate-600">{sch.startTime ? `${sch.startTime}-${sch.endTime}` : '-'}</div><div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.regularTime)}</div><div className="font-mono font-bold text-slate-700">{formatSpecialTime(sch.overtime)}</div><div className="font-mono text-slate-400">{formatSpecialTime(sch.nightTime)}</div><div className="font-mono text-slate-400 text-xs">{sch.timeAnnualLeave > 0 ? formatSpecialTime(sch.timeAnnualLeave) : '-'}</div></div></td>
                                       <td className="px-2 py-2 border-l"><div className="flex flex-col gap-1"><div className="h-5 flex gap-1">{hasHolidayWork && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-700">休出あり</span>}{hasNightWork && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-yellow-900 text-white">夜業</span>}{rep.nightWorkVal && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700">夜業{rep.nightWorkVal}</span>}</div><div className="font-mono h-4 text-slate-400 text-xs">{rep.startTime ? '記録あり' : '-'}</div><div className="font-mono font-bold text-blue-600">{formatSpecialTime(isFlex ? (rep.regularTime || 0) + (rep.overtime || 0) : rep.regularTime)}</div><div className="font-mono font-bold text-blue-600">{isFlex ? '-' : formatSpecialTime(rep.overtime)}</div><div className="font-mono text-slate-400">{formatSpecialTime(rep.nightTime)}</div><div className="h-4 flex gap-1 text-[9px]"></div></div></td>
                                       <td className="px-2 py-2 border-l text-center align-middle"><div className="flex flex-col gap-1 items-center justify-center h-full"><div className="h-5 text-[10px] font-bold text-rose-500">{nightWorkCheckNG && '夜業1NG'}{nightWorkCheckOK && <span className="text-emerald-500">夜業1OK</span>}{nextDayCheckOK===false && '翌NG'}{nightWorkMessage && <span className="text-rose-600">{nightWorkMessage}</span>}</div><div className="h-4"></div>
                                         <div className={`font-mono font-bold flex items-center gap-1 ${Math.abs(diffRegular) > 0.01 || warningMessage ? (warningMessage ? 'text-amber-600' : 'text-rose-600') : 'text-emerald-600'}`}>
