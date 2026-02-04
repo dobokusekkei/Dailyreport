@@ -19,6 +19,10 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   
   <style>
+    html, body, #root {
+      height: 100%;
+      overflow: hidden;
+    }
     body {
       background-color: #f8fafc; /* bg-slate-50 */
     }
@@ -999,8 +1003,8 @@
       const selectEmployeeByKey = (emp) => setSelectedId(Object.keys(employees).find(k => employees[k] === emp));
 
       return (
-        <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-8 pb-20 flex flex-col overflow-hidden h-screen">
-          <header className="shrink-0 max-w-7xl mx-auto w-full mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="h-full w-full bg-slate-50 text-slate-900 p-4 md:p-6 flex flex-col overflow-hidden">
+          <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
               <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.2)</h1><p className="text-xs text-slate-500 font-medium">B列曜日表示・加休ハッチ・スクロール固定・夜業判定強化(F=7ベース)</p></div>
@@ -1017,7 +1021,7 @@
           
           <main className="flex-1 w-full max-w-7xl mx-auto overflow-hidden flex flex-col min-h-0">
             {view === 'input' ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto h-full content-start">
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
                     <div className="flex items-center gap-2 mb-4"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><FileSpreadsheet className="w-5 h-5" /></div><h2 className="font-bold">ファイルアップロード</h2></div>
@@ -1094,8 +1098,7 @@
                            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
                              <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffRegular) < 0.01 || d.isSpecialCase) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>所定内: {comparisonData.rows.every(d => Math.abs(d.diffRegular) < 0.01 || d.isSpecialCase) ? 'OK' : 'NG'}</div>
                              <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>残業: {comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) ? 'OK' : 'NG'}</div>
-                             <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>深夜: {comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01) ? 'OK' : 'NG'}</div>
-                             <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>夜業1入力チェック: {comparisonData.rows.every(d => !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'OK' : 'NG'}</div>
+                             <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>夜業入力: {comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'OK' : 'NG'}</div>
                              <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>翌日非番: {comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'OK' : 'NG'}</div>
                              <div className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.nightWorkMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>
                                回数突合: {!comparisonData.summary.nightWorkMismatch ? 'OK' : 'NG'} 
