@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.9.11)</title>
+  <title>勤怠・日報比較ツール (Ver.9.14)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -211,6 +211,7 @@
                   <div>
                     <h4 className="font-bold text-indigo-600 mb-2">フレックス対象者</h4>
                     <p className="mb-2">従来通り、CSVデータの「時間」列等を単純集計します。</p>
+                    <p className="text-xs text-rose-600 font-bold mt-1">※種別が「フレックス」の行は、開始-終了の差分(休憩除く)を所定内として計算します。</p>
                   </div>
                 </div>
               </section>
@@ -518,10 +519,15 @@
         });
       }
 
-      // 服務簿: 日次集計ロジック (Ver9.11修正: 自己時間除外、時間年休時刻)
-      aggregateServiceRecord(empId, day, records, isFlex) {
-          if (isFlex) {
-              // フレックス: 単純集計
+      // 服務簿: 日次集計ロジック (Ver9.14修正: フレックス計算変更)
+      aggregateServiceRecord(empId, day, records, isFlexEmployee) {
+          // レコードに「フレックス」が含まれているかチェック
+          // 社員設定でフレックスでなくても、実績データに「フレックス」があればフレックス計算モードにする
+          const hasFlexRecord = records.some(r => r.type === 'フレックス');
+          const isFlexMode = isFlexEmployee || hasFlexRecord;
+
+          if (isFlexMode) {
+              // フレックス: 
               let regularTime = 0;
               let overtime = 0;
               let nightTime = 0;
@@ -545,14 +551,19 @@
                   
                   // 時間集計
                   if (r.type.includes('時間外') || r.type.includes('休日')) {
-                       overtime += parseSpecialTime(r.time);
+                        overtime += parseSpecialTime(r.time);
                   } else if (r.type.includes('時間年休')) {
-                       timeAnnualLeave += parseSpecialTime(r.time);
-                       if (r.startTime && r.endTime) {
-                           timeAnnualLeaveDetails.push(`${r.startTime}-${r.endTime}`);
-                       }
+                        timeAnnualLeave += parseSpecialTime(r.time);
+                        if (r.startTime && r.endTime) {
+                            timeAnnualLeaveDetails.push(`${r.startTime}-${r.endTime}`);
+                        }
+                  } else if (r.type === 'フレックス') {
+                        // 修正: ユーザー要望により、時間(M列)をそのまま所定内として使用
+                        // 開始・終了時刻は下部の時刻更新ロジックで自動的に取得される
+                        regularTime += parseSpecialTime(r.time);
                   } else {
-                       regularTime += parseSpecialTime(r.time);
+                        // その他の種別
+                        regularTime += parseSpecialTime(r.time);
                   }
                   nightTime += parseSpecialTime(r.nightTime);
                   
@@ -1219,7 +1230,7 @@
           if (sch.overtime > 0) { warningMessage = 'FLEX残業NG'; hasMismatch = true; }
           const flexRegularDiff = (sch.regularTime || 0) - ((rep.regularTime || 0) + (rep.overtime || 0));
           if (Math.abs(flexRegularDiff) > 0.01) hasMismatch = true;
-          if (!hasMismatch) { diffRegular = 0; isSpecialCase = true; } else { diffRegular = flexRegularDiff; }
+          if (!hasMismatch) { diffRegular = 0; isSpecialCase = false; } else { diffRegular = flexRegularDiff; }
           diffOvertime = 0;
         } else {
           // 一般社員の所定内チェック（夜業特例含む）
@@ -1406,7 +1417,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.11)</h1><p className="text-xs text-slate-500 font-medium">服務簿CSV読込・年休＆時間年休対応・UI調整版</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.14)</h1><p className="text-xs text-slate-500 font-medium">服務簿CSV読込・年休＆時間年休対応・UI調整版</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -1638,8 +1649,9 @@
                                         <div className="flex flex-col gap-0.5">
                                           <div className="row-h flex gap-1">{hasHolidayWork && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-700">休出あり</span>}{hasNightWork && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-yellow-900 text-white">夜業</span>}{rep.nightWorkVal && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700">夜業{rep.nightWorkVal}</span>}</div>
                                           <div className="row-h font-mono text-slate-400 text-xs">{rep.startTime ? '記録あり' : '-'}</div>
-                                          <div className="row-h font-mono font-bold text-blue-600">{formatSpecialTime(isFlex ? (rep.regularTime || 0) + (rep.overtime || 0) : rep.regularTime)}</div>
-                                          <div className="row-h font-mono font-bold text-blue-600">{isFlex ? '-' : formatSpecialTime(rep.overtime)}</div>
+                                          {/* フレックスの場合も、そのまま表示するように修正 (合算せず、-にしない) */}
+                                          <div className="row-h font-mono font-bold text-blue-600">{formatSpecialTime(rep.regularTime)}</div>
+                                          <div className="row-h font-mono font-bold text-blue-600">{formatSpecialTime(rep.overtime)}</div>
                                           <div className="row-h font-mono text-slate-400">{formatSpecialTime(rep.nightTime)}</div>
                                           <div className="row-h flex gap-1 text-[9px]"></div>
                                         </div>
