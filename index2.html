@@ -627,29 +627,8 @@
           } catch (e) { console.error(e); }
         }
         
-        // 服務簿データの集計（復元データの場合はrawServiceDataがないのでスキップされる）
-        Object.values(this.tempMap).forEach(entry => {
-            const tempSvc = entry.rawServiceData;
-            if (tempSvc && Object.keys(tempSvc.days).length > 0) {
-                const normName = entry.normalizedName;
-                let isFlex = settings.flexEmployees.includes(normName);
-                if (settings.nameMappings) {
-                      const m = settings.nameMappings.find(map => normalizeName(map.nippo) === normName || normalizeName(map.kintai) === normName);
-                      if (m) {
-                          const kn = normalizeName(m.kintai);
-                          if (settings.flexEmployees.includes(kn)) isFlex = true;
-                      }
-                }
-
-                Object.keys(tempSvc.days).forEach(dayKey => {
-                    const day = parseInt(dayKey, 10);
-                    const records = tempSvc.days[dayKey];
-                    const aggregated = this.aggregateServiceRecord(null, day, records, isFlex);
-                    this.upsertServiceRecord(entry.serviceRecord, aggregated);
-                });
-            }
-        });
-
+        // パース段階では服務簿の集計は行わない（recalcEmployeesで行うため）
+        // ただし、employeesオブジェクトの構造は作る
         const finalEmployees = {};
         Object.values(this.tempMap).forEach(entry => {
             let finalId = entry.ids.service || entry.ids.schedule || entry.ids.report || `TEMP-${entry.normalizedName}`;
@@ -662,6 +641,7 @@
                 schedule: entry.schedule,
                 report: entry.report,
                 serviceRecord: entry.serviceRecord,
+                rawServiceData: entry.rawServiceData, // 生データを引き渡す
                 warnings: entry.warnings
             };
         });
@@ -1222,43 +1202,13 @@
       const onFileChange = (e) => setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
       const removeFile = (index) => setFiles(prev => prev.filter((_, i) => i !== index));
 
+      // --- Recalculation Logic ---
       const recalcEmployees = useCallback((currentEmployees, newSettings) => {
+        if (!xlsx) return {}; 
+        const parser = new AttendanceFileParser(xlsx); 
         const newMap = {};
-        
-        // 配列データマージ用ヘルパー
-        const mergeRecordArrays = (arr1, arr2) => {
-          const result = [...arr1];
-          arr2.forEach(item => {
-            const idx = result.findIndex(r => r.day === item.day);
-            if (idx >= 0) {
-              const ex = result[idx];
-              result[idx] = {
-                ...ex,
-                ...item,
-                // 数値項目は加算
-                regularTime: (ex.regularTime || 0) + (item.regularTime || 0),
-                overtime: (ex.overtime || 0) + (item.overtime || 0),
-                nightTime: (ex.nightTime || 0) + (item.nightTime || 0),
-                holidayWork: (ex.holidayWork || 0) + (item.holidayWork || 0),
-                timeAnnualLeave: (ex.timeAnnualLeave || 0) + (item.timeAnnualLeave || 0),
-                // 文字列は上書き（または優先）
-                status: item.status || ex.status,
-                startTime: item.startTime || ex.startTime,
-                endTime: item.endTime || ex.endTime,
-                nightWorkVal: item.nightWorkVal || ex.nightWorkVal,
-                special: item.special || ex.special,
-                // 配列は結合して重複排除
-                types: [...new Set([...(ex.types || []), ...(item.types || [])])],
-                // 詳細情報は結合
-                timeAnnualLeaveDetails: [ex.timeAnnualLeaveDetails, item.timeAnnualLeaveDetails].filter(Boolean).join(", ")
-              };
-            } else {
-              result.push(item);
-            }
-          });
-          return result;
-        };
 
+        // 1. Grouping and Merging
         Object.values(currentEmployees).forEach(emp => {
           let normName = normalizeName(emp.employeeName);
           let targetName = emp.employeeName;
@@ -1281,20 +1231,85 @@
               employeeName: targetName,
               schedule: emp.schedule,
               report: emp.report,
-              serviceRecord: emp.serviceRecord,
-              warnings: emp.warnings || []
+              serviceRecord: [], // Reset serviceRecord for recalculation
+              rawServiceData: { name: targetName, days: {} },
+              warnings: emp.warnings || [],
+              hasRawData: false
             };
-          } else {
-            const target = newMap[groupKey];
-            target.schedule = mergeRecordArrays(target.schedule, emp.schedule);
-            target.report = mergeRecordArrays(target.report, emp.report);
-            target.serviceRecord = mergeRecordArrays(target.serviceRecord, emp.serviceRecord);
-            if (emp.warnings) {
-              emp.warnings.forEach(w => {
-                if (!target.warnings.includes(w)) target.warnings.push(w);
-              });
-            }
           }
+          
+          const target = newMap[groupKey];
+          
+          // Merge arrays helper
+          const mergeRecordArrays = (arr1, arr2) => {
+             const result = [...arr1];
+             arr2.forEach(item => {
+               const idx = result.findIndex(r => r.day === item.day);
+               if (idx >= 0) {
+                 const ex = result[idx];
+                 result[idx] = { ...ex, ...item, types: [...new Set([...(ex.types||[]), ...(item.types||[])])] }; // Simple merge for non-calc fields
+                 // Note: For schedule/report, we assume additive numbers is fine or handled by parser. 
+                 // Here we just merge what we have.
+                 // For recalc logic, we rely on rawServiceData.
+               } else {
+                 result.push(item);
+               }
+             });
+             return result;
+          };
+
+          target.schedule = mergeRecordArrays(target.schedule, emp.schedule);
+          target.report = mergeRecordArrays(target.report, emp.report);
+          
+          if (emp.warnings) {
+            emp.warnings.forEach(w => {
+              if (!target.warnings.includes(w)) target.warnings.push(w);
+            });
+          }
+
+          // Merge Raw Data
+          if (emp.rawServiceData && emp.rawServiceData.days) {
+             Object.assign(target.rawServiceData.days, emp.rawServiceData.days);
+          }
+          
+          if (emp.rawServiceData && Object.keys(emp.rawServiceData.days).length > 0) {
+              target.hasRawData = true;
+          } else {
+              // If no raw data (e.g. from restored excel), keep existing serviceRecord
+              target.serviceRecord = mergeRecordArrays(target.serviceRecord, emp.serviceRecord);
+          }
+        });
+        
+        // 2. Recalculate Service Records & Determine Attributes
+        Object.values(newMap).forEach(emp => {
+            const currentNameNorm = normalizeName(emp.employeeName);
+            let isManager = newSettings.managers.includes(currentNameNorm);
+            let isFlex = newSettings.flexEmployees.includes(currentNameNorm);
+            
+            // Check mappings again for attributes
+            if (newSettings.nameMappings) {
+                const mapping = newSettings.nameMappings.find(m => normalizeName(m.nippo) === currentNameNorm);
+                if (mapping) {
+                    const kintaiName = normalizeName(mapping.kintai);
+                    if (newSettings.managers.includes(kintaiName)) isManager = true;
+                    if (newSettings.flexEmployees.includes(kintaiName)) isFlex = true;
+                }
+            }
+            
+            emp.isManager = isManager;
+            emp.isFlex = isFlex;
+
+            // Recalculate from raw data if available
+            if (emp.hasRawData) {
+                emp.serviceRecord = []; // Clear old calculations
+                const days = emp.rawServiceData.days;
+                Object.keys(days).forEach(dayKey => {
+                    const day = parseInt(dayKey, 10);
+                    const records = days[dayKey];
+                    const aggregated = parser.aggregateServiceRecord(null, day, records, emp.isFlex);
+                    parser.upsertServiceRecord(emp.serviceRecord, aggregated);
+                });
+            }
         });
         
         const finalObj = {};
@@ -1302,7 +1317,7 @@
           finalObj[e.employeeId] = e;
         });
         return finalObj;
-      }, []);
+      }, [xlsx]);
 
       const handleSaveSettings = (newSettings) => {
         setSettings(newSettings);
@@ -1493,25 +1508,12 @@
         const limitDay = checkMode === 'day20' ? 20 : 31;
 
         list.forEach(emp => {
-          let currentName = normalizeName(emp.employeeName);
-          let isManager = settings.managers.includes(currentName);
-          let isFlex = settings.flexEmployees.includes(currentName);
-          
-          if (settings.nameMappings) {
-            const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentName || normalizeName(m.kintai) === currentName);
-            if (mapping) {
-                currentName = normalizeName(mapping.nippo);
-                const kintaiName = normalizeName(mapping.kintai);
-                if (settings.managers.includes(currentName) || settings.managers.includes(kintaiName)) isManager = true;
-                if (settings.flexEmployees.includes(currentName) || settings.flexEmployees.includes(kintaiName)) isFlex = true;
-            }
-          }
-
-          if (isFlex) flexCount++;
-          else if (isManager) managerCount++; 
+          // 属性は recalcEmployees で確定済み
+          if (emp.isFlex) flexCount++;
+          else if (emp.isManager) managerCount++; 
           else generalCount++;
           
-          if (analyzeEmployeeMismatch(emp, isManager, isFlex, limitDay)) mismatchEmployees.push(emp);
+          if (analyzeEmployeeMismatch(emp, emp.isManager, emp.isFlex, limitDay)) mismatchEmployees.push(emp);
 
           const hasService = emp.serviceRecord.length > 0;
           const hasSchedule = emp.schedule.length > 0;
@@ -1522,7 +1524,7 @@
           }
         });
         return { managerCount, generalCount, flexCount, mismatchEmployees, missingReportEmployees };
-      }, [employees, settings, checkMode]);
+      }, [employees, checkMode]);
 
       const handleProcess = async () => {
         if (files.length === 0 || !xlsx) return;
@@ -1537,8 +1539,9 @@
               setSettings(finalSettings);
               localStorage.setItem(STORAGE_KEY, JSON.stringify(finalSettings));
           }
-          // 強制再計算
+          // 強制再計算により属性と計算結果を確定させる
           const finalEmployees = recalcEmployees(parsedData.employees, finalSettings);
+          
           setEmployees(finalEmployees); 
           setFileMeta(parsedData.meta || {});
           setFiles([]);
@@ -1557,7 +1560,7 @@
         // --- Metadata Sheet Creation ---
         const metaRows = [
             ["Property", "Value"],
-            ["ExportVersion", "9.20"],
+            ["ExportVersion", "9.21"],
             ["ManagerCount", employeeSummary.managerCount],
             ["GeneralCount", employeeSummary.generalCount],
             ["FlexCount", employeeSummary.flexCount],
@@ -1572,21 +1575,7 @@
         xlsx.utils.book_append_sheet(wb, wsMeta, "_Metadata");
 
         Object.values(employees).forEach(emp => {
-          let currentNameNorm = normalizeName(emp.employeeName);
-          let isManager = settings.managers.includes(currentNameNorm);
-          let isFlex = settings.flexEmployees.includes(currentNameNorm);
-          
-          if (settings.nameMappings) {
-            const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentNameNorm || normalizeName(m.kintai) === currentNameNorm);
-            if (mapping) {
-              const kintaiName = normalizeName(mapping.kintai);
-              if (settings.managers.includes(kintaiName) || settings.managers.includes(currentNameNorm)) isManager = true;
-              if (settings.flexEmployees.includes(kintaiName) || settings.flexEmployees.includes(currentNameNorm)) isFlex = true;
-            }
-          }
-
           const rows = [];
-          
           const scheduleMap = {};
           emp.schedule.forEach(s => scheduleMap[s.day] = s);
           const serviceMap = {};
@@ -1602,7 +1591,7 @@
              
              if (!sch.status && !rep.status && !svc.status && !sch.overtime && !rep.overtime && !svc.startTime && !sch.regularTime && !rep.regularTime) continue;
 
-             const check = checkDailyMismatch(sch, rep, svc, isManager, isFlex, nextDaySch, nextDaySvc);
+             const check = checkDailyMismatch(sch, rep, svc, emp.isManager, emp.isFlex, nextDaySch, nextDaySvc);
              
              let schStatusStr = sch.status || '';
              if (sch.special) schStatusStr += (schStatusStr ? `, ${sch.special}` : sch.special);
@@ -1658,7 +1647,7 @@
               }
           });
           
-          let nightWorkMismatch = (!isManager && nightWorkDays !== hibanDays);
+          let nightWorkMismatch = (!emp.isManager && nightWorkDays !== hibanDays);
           let compensatoryLeaveMismatch = (weekHolidayWorkCount !== compensatoryLeaveCount);
 
           rows.push([`社員名: ${emp.employeeName}`, `ID: ${emp.employeeId}`]);
@@ -1718,18 +1707,6 @@
 
       const comparisonData = useMemo(() => {
         if (!currentEmployee) return [];
-        const currentNameNorm = normalizeName(currentEmployee.employeeName);
-        let isManager = settings.managers.includes(currentNameNorm);
-        let isFlex = settings.flexEmployees.includes(currentNameNorm);
-        
-        if (settings.nameMappings) {
-          const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentNameNorm || normalizeName(m.kintai) === currentNameNorm);
-          if (mapping) {
-            const kintaiName = normalizeName(mapping.kintai);
-            if (settings.managers.includes(kintaiName) || settings.managers.includes(currentNameNorm)) isManager = true;
-            if (settings.flexEmployees.includes(kintaiName) || settings.flexEmployees.includes(currentNameNorm)) isFlex = true;
-          }
-        }
         
         const limitDay = checkMode === 'day20' ? 20 : 31;
         const result = Array.from({ length: 31 }, (_, i) => i + 1)
@@ -1741,7 +1718,7 @@
             const nextDaySch = currentEmployee.schedule.find(r => r.day === day + 1) || null;
             const nextDaySvc = currentEmployee.serviceRecord.find(r => r.day === day + 1) || null;
             
-            const check = checkDailyMismatch(sch, rep, svc, isManager, isFlex, nextDaySch, nextDaySvc);
+            const check = checkDailyMismatch(sch, rep, svc, currentEmployee.isManager, currentEmployee.isFlex, nextDaySch, nextDaySvc);
             
             let rowColor = '';
             const weekday = sch.weekday || '';
@@ -1793,11 +1770,11 @@
             }
         });
         
-        if (!isManager && nightWorkDays !== hibanDays) nightWorkMismatch = true;
+        if (!currentEmployee.isManager && nightWorkDays !== hibanDays) nightWorkMismatch = true;
         const compensatoryLeaveMismatch = (weekHolidayWorkCount !== compensatoryLeaveCount);
 
-        return { rows: result, summary: { nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch, saturdayHibanCount, saturdayHibanMismatch }, isManager, isFlex };
-      }, [currentEmployee, settings, checkMode]);
+        return { rows: result, summary: { nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch, saturdayHibanCount, saturdayHibanMismatch }, isManager: currentEmployee.isManager, isFlex: currentEmployee.isFlex };
+      }, [currentEmployee, checkMode]);
 
       const selectEmployeeByKey = (emp) => setSelectedId(Object.keys(employees).find(k => employees[k] === emp));
 
@@ -1806,7 +1783,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.20)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.21)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -1905,19 +1882,9 @@
                       const isMismatch = employeeSummary.mismatchEmployees.includes(emp);
                       const isMissingReport = employeeSummary.missingReportEmployees.includes(emp);
                       const normName = normalizeName(emp.employeeName);
-                      let isManager = settings.managers.includes(normName);
-                      let isFlex = settings.flexEmployees.includes(normName);
-                      
-                      // 従業員リスト表示でもマッピングを考慮して属性アイコンを表示
-                      if (settings.nameMappings) {
-                        const m = settings.nameMappings.find(map => normalizeName(map.nippo) === normName || normalizeName(map.kintai) === normName);
-                        if(m) {
-                           const kn = normalizeName(m.kintai);
-                           const nn = normalizeName(m.nippo);
-                           if(settings.managers.includes(kn) || settings.managers.includes(nn)) isManager=true;
-                           if(settings.flexEmployees.includes(kn) || settings.flexEmployees.includes(nn)) isFlex=true;
-                        }
-                      }
+                      // 属性は保存されたデータを使用
+                      let isManager = emp.isManager;
+                      let isFlex = emp.isFlex;
 
                       return (<button key={key} onClick={() => setSelectedId(key)} className={`w-full p-3 rounded-2xl text-left transition-all flex items-center justify-between border ${selectedId === key ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg scale-105 z-10' : 'bg-white border-slate-200 hover:bg-slate-50'}`}><div className="truncate flex-1"><div className={`text-[9px] font-mono ${selectedId === key ? 'text-indigo-200' : 'text-slate-400'}`}>{emp.employeeId}</div><div className="font-bold truncate text-sm flex items-center gap-1">{emp.employeeName}{isManager && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 rounded">管</span>}{isFlex && <span className="text-[9px] bg-orange-100 text-orange-700 px-1 rounded">F</span>}{isMismatch && <span className="w-2 h-2 rounded-full bg-rose-500"></span>}{isMissingReport && <span className="w-2 h-2 rounded-full bg-amber-500 ml-1"></span>}</div></div><ChevronRight className={`w-4 h-4 shrink-0 ${selectedId === key ? 'opacity-100' : 'opacity-20'}`} /></button>);
                     })}
