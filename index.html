@@ -148,30 +148,6 @@
       return String(name).replace(/[\s\u3000]+/g, '');
     };
 
-    // --- 属性判定ヘルパー ---
-    const getEmployeeAttributes = (name, settings) => {
-        const normName = normalizeName(name);
-        let isManager = settings.managers.includes(normName);
-        let isFlex = settings.flexEmployees.includes(normName);
-        
-        if (settings.nameMappings) {
-            // マッピングチェック: 名前が日報(旧姓)か勤務表(新姓)のいずれかに一致するか
-            const mapping = settings.nameMappings.find(m => 
-                normalizeName(m.nippo) === normName || normalizeName(m.kintai) === normName
-            );
-            
-            if (mapping) {
-                // 両方の名前でリストをチェック (フレックスや管理職リストにどちらかが入っていればON)
-                const nNippo = normalizeName(mapping.nippo);
-                const nKintai = normalizeName(mapping.kintai);
-                
-                if (settings.managers.includes(nNippo) || settings.managers.includes(nKintai)) isManager = true;
-                if (settings.flexEmployees.includes(nNippo) || settings.flexEmployees.includes(nKintai)) isFlex = true;
-            }
-        }
-        return { isManager, isFlex };
-    };
-
     // --- ヘルプモーダル ---
     const HelpModal = ({ isOpen, onClose }) => {
       if (!isOpen) return null;
@@ -515,13 +491,13 @@
         // ソースごとのIDを保存（優先度処理のため）
         if (id) {
             const normId = normalizeId(id);
-            // recalc時もserviceIDを優先確保（既存IDを正とする）
-            if (sourceType === 'service' || sourceType === 'recalc') entry.ids.service = normId;
+            if (sourceType === 'service') entry.ids.service = normId;
             if (sourceType === 'schedule') entry.ids.schedule = normId;
             if (sourceType === 'report') entry.ids.report = normId;
         }
         
         // 表示名の更新 (マッピング適用済みなら更新しない、そうでなければ服務簿名を優先)
+        // ※マッピングがある場合は上記でdisplayNameを旧姓に固定済み
         const isMapped = settings && settings.nameMappings && settings.nameMappings.some(m => normalizeName(m.nippo) === normName);
         if (!isMapped && sourceType === 'service' && name) {
             entry.displayName = name;
@@ -576,7 +552,7 @@
         for (const file of files) {
           try {
             const { rows, fileName } = await this.parseFile(file);
-             
+              
             let isSchedule = false;
             if (fileName.includes('勤務表')) {
                const m1Val = (rows.length > 0 && rows[0] && rows[0][12]) ? String(rows[0][12]) : '';
@@ -605,7 +581,15 @@
             const tempSvc = entry.rawServiceData;
             if (tempSvc && Object.keys(tempSvc.days).length > 0) {
                 // フレックス判定
-                const { isFlex } = getEmployeeAttributes(entry.normalizedName, settings);
+                const normName = entry.normalizedName;
+                let isFlex = settings.flexEmployees.includes(normName);
+                if (settings.nameMappings) {
+                      const m = settings.nameMappings.find(map => normalizeName(map.nippo) === normName || normalizeName(map.kintai) === normName);
+                      if (m) {
+                          const kn = normalizeName(m.kintai);
+                          if (settings.flexEmployees.includes(kn)) isFlex = true;
+                      }
+                }
 
                 Object.keys(tempSvc.days).forEach(dayKey => {
                     const day = parseInt(dayKey, 10);
@@ -855,7 +839,7 @@
         currentEntry = this.getOrInitEntry(rawName, rawId, 'report', settings);
         if (!currentEntry) return;
 
-        const { isFlex } = getEmployeeAttributes(currentEntry.normalizedName, settings);
+        const isFlex = settings.flexEmployees.includes(currentEntry.normalizedName) || (settings.nameMappings && settings.nameMappings.some(m => normalizeName(m.nippo) === currentEntry.normalizedName && settings.flexEmployees.includes(normalizeName(m.kintai))));
         
         if (!isFlex) {
           for(let r = 213; r <= 220; r++) {
@@ -1094,42 +1078,87 @@
       const removeFile = (index) => setFiles(prev => prev.filter((_, i) => i !== index));
 
       const recalcEmployees = useCallback((currentEmployees, newSettings) => {
-        const parser = new AttendanceFileParser(null);
-        // 既存データを全て再処理
+        const newMap = {};
+        
+        // 配列データマージ用ヘルパー
+        const mergeRecordArrays = (arr1, arr2) => {
+          const result = [...arr1];
+          arr2.forEach(item => {
+            const idx = result.findIndex(r => r.day === item.day);
+            if (idx >= 0) {
+              const ex = result[idx];
+              result[idx] = {
+                ...ex,
+                ...item,
+                // 数値項目は加算
+                regularTime: (ex.regularTime || 0) + (item.regularTime || 0),
+                overtime: (ex.overtime || 0) + (item.overtime || 0),
+                nightTime: (ex.nightTime || 0) + (item.nightTime || 0),
+                holidayWork: (ex.holidayWork || 0) + (item.holidayWork || 0),
+                timeAnnualLeave: (ex.timeAnnualLeave || 0) + (item.timeAnnualLeave || 0),
+                // 文字列は上書き（または優先）
+                status: item.status || ex.status,
+                startTime: item.startTime || ex.startTime,
+                endTime: item.endTime || ex.endTime,
+                nightWorkVal: item.nightWorkVal || ex.nightWorkVal,
+                special: item.special || ex.special,
+                // 配列は結合して重複排除
+                types: [...new Set([...(ex.types || []), ...(item.types || [])])],
+                // 詳細情報は結合
+                timeAnnualLeaveDetails: [ex.timeAnnualLeaveDetails, item.timeAnnualLeaveDetails].filter(Boolean).join(", ")
+              };
+            } else {
+              result.push(item);
+            }
+          });
+          return result;
+        };
+
         Object.values(currentEmployees).forEach(emp => {
-            // IDと名前を使ってエントリを取得・初期化（ここで名寄せが行われる）
-            const entry = parser.getOrInitEntry(emp.employeeName, emp.employeeId, 'recalc', newSettings);
-            if (!entry) return;
-
-            // 既存レコードを統合先の配列にマージ
-            if (emp.schedule) emp.schedule.forEach(r => parser.upsertRecord(entry.schedule, r));
-            if (emp.report) emp.report.forEach(r => parser.upsertRecord(entry.report, r));
-            if (emp.serviceRecord) emp.serviceRecord.forEach(r => parser.upsertServiceRecord(entry.serviceRecord, r));
-            if (emp.warnings) {
-                 emp.warnings.forEach(w => {
-                     if (!entry.warnings.includes(w)) entry.warnings.push(w);
-                 });
+          let normName = normalizeName(emp.employeeName);
+          let targetName = emp.employeeName;
+          
+          // マッピング適用
+          if (newSettings.nameMappings) {
+            const mapping = newSettings.nameMappings.find(m => 
+              normalizeName(m.kintai) === normName || normalizeName(m.nippo) === normName
+            );
+            if (mapping) {
+              // 旧姓(nippo)をキーとして統合
+              normName = normalizeName(mapping.nippo);
+              targetName = mapping.nippo;
             }
-        });
-
-        // 最終的なemployeesオブジェクトを生成
-        const newEmployees = {};
-        Object.values(parser.tempMap).forEach(entry => {
-            let finalId = entry.ids.service || entry.ids.schedule || entry.ids.report || `TEMP-${entry.normalizedName}`;
-            if (newEmployees[finalId]) {
-                finalId = `${finalId}_${entry.normalizedName}`;
-            }
-            newEmployees[finalId] = {
-                employeeId: finalId,
-                employeeName: entry.displayName,
-                schedule: entry.schedule,
-                report: entry.report,
-                serviceRecord: entry.serviceRecord,
-                warnings: entry.warnings
+          }
+          
+          const groupKey = normName;
+          
+          if (!newMap[groupKey]) {
+            newMap[groupKey] = {
+              employeeId: emp.employeeId,
+              employeeName: targetName,
+              schedule: emp.schedule,
+              report: emp.report,
+              serviceRecord: emp.serviceRecord,
+              warnings: emp.warnings || []
             };
+          } else {
+            const target = newMap[groupKey];
+            target.schedule = mergeRecordArrays(target.schedule, emp.schedule);
+            target.report = mergeRecordArrays(target.report, emp.report);
+            target.serviceRecord = mergeRecordArrays(target.serviceRecord, emp.serviceRecord);
+            if (emp.warnings) {
+              emp.warnings.forEach(w => {
+                if (!target.warnings.includes(w)) target.warnings.push(w);
+              });
+            }
+          }
         });
         
-        return newEmployees;
+        const finalObj = {};
+        Object.values(newMap).forEach(e => {
+          finalObj[e.employeeId] = e;
+        });
+        return finalObj;
       }, []);
 
       const handleSaveSettings = (newSettings) => {
@@ -1312,8 +1341,20 @@
         const limitDay = checkMode === 'day20' ? 20 : 31;
 
         list.forEach(emp => {
-          // 共通の属性判定関数を使用
-          const { isManager, isFlex } = getEmployeeAttributes(emp.employeeName, settings);
+          let currentName = normalizeName(emp.employeeName);
+          let isManager = settings.managers.includes(currentName);
+          let isFlex = settings.flexEmployees.includes(currentName);
+          
+          if (settings.nameMappings) {
+            const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentName || normalizeName(m.kintai) === currentName);
+            if (mapping) {
+                currentName = normalizeName(mapping.nippo);
+                // マッピングされた名前のどちらかがリストにあれば属性を付与
+                const kintaiName = normalizeName(mapping.kintai);
+                if (settings.managers.includes(currentName) || settings.managers.includes(kintaiName)) isManager = true;
+                if (settings.flexEmployees.includes(currentName) || settings.flexEmployees.includes(kintaiName)) isFlex = true;
+            }
+          }
 
           if (isFlex) flexCount++;
           else if (isManager) managerCount++; 
@@ -1351,8 +1392,19 @@
 
       const comparisonData = useMemo(() => {
         if (!currentEmployee) return [];
-        // 共通の属性判定関数を使用
-        const { isManager, isFlex } = getEmployeeAttributes(currentEmployee.employeeName, settings);
+        const currentNameNorm = normalizeName(currentEmployee.employeeName);
+        let isManager = settings.managers.includes(currentNameNorm);
+        let isFlex = settings.flexEmployees.includes(currentNameNorm);
+        
+        if (settings.nameMappings) {
+          const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentNameNorm || normalizeName(m.kintai) === currentNameNorm);
+          if (mapping) {
+            // マッピングがある場合、日報名(currentNameNorm)または勤務表名のどちらかがフレックスリストにあればフレックスとする
+            const kintaiName = normalizeName(mapping.kintai);
+            if (settings.managers.includes(kintaiName) || settings.managers.includes(currentNameNorm)) isManager = true;
+            if (settings.flexEmployees.includes(kintaiName) || settings.flexEmployees.includes(currentNameNorm)) isFlex = true;
+          }
+        }
         
         const limitDay = checkMode === 'day20' ? 20 : 31;
         const result = Array.from({ length: 31 }, (_, i) => i + 1)
@@ -1482,19 +1534,7 @@
                         <div className="flex items-center gap-2 font-bold">{employeeSummary.mismatchEmployees.length > 0 ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}不整合あり: {employeeSummary.mismatchEmployees.length} 名 {checkMode === 'day20' && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full ml-2">20日〆</span>}</div>
                         <ChevronRight className={`w-5 h-5 transition-transform ${mismatchListOpen ? 'rotate-90' : ''}`} />
                       </div>
-                      {mismatchListOpen && employeeSummary.mismatchEmployees.length > 0 && <div className="mt-2 p-2 bg-white border border-rose-100 rounded-xl shadow-sm grid grid-cols-2 md:grid-cols-4 gap-2 max-h-32 overflow-y-auto">{employeeSummary.mismatchEmployees.map(emp => {
-                        // リスト内でもフレックス判定を反映
-                        const { isManager, isFlex } = getEmployeeAttributes(emp.employeeName, settings);
-                        return (
-                          <button key={emp.employeeId} onClick={() => selectEmployeeByKey(emp)} className="text-left px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg truncate flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full bg-rose-500 inline-block flex-shrink-0"></span>
-                            {emp.employeeName}
-                            {isManager && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 rounded">管</span>}
-                            {isFlex && <span className="text-[9px] bg-orange-100 text-orange-700 px-1 rounded">F</span>}
-                            {emp.warnings && emp.warnings.includes('H列不整合') && <span className="text-[9px] bg-black text-white px-1 rounded">H列</span>}
-                          </button>
-                        );
-                      })}</div>}
+                      {mismatchListOpen && employeeSummary.mismatchEmployees.length > 0 && <div className="mt-2 p-2 bg-white border border-rose-100 rounded-xl shadow-sm grid grid-cols-2 md:grid-cols-4 gap-2 max-h-32 overflow-y-auto">{employeeSummary.mismatchEmployees.map(emp => (<button key={emp.employeeId} onClick={() => selectEmployeeByKey(emp)} className="text-left px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg truncate flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block flex-shrink-0"></span>{emp.employeeName}{emp.warnings && emp.warnings.includes('H列不整合') && <span className="text-[9px] bg-black text-white px-1 rounded">H列</span>}</button>))}</div>}
                     </div>
                     {/* 日報未提出アコーディオン */}
                     {employeeSummary.missingReportEmployees.length > 0 && (
@@ -1533,8 +1573,20 @@
                       const key = Object.keys(employees).find(k => employees[k] === emp);
                       const isMismatch = employeeSummary.mismatchEmployees.includes(emp);
                       const isMissingReport = employeeSummary.missingReportEmployees.includes(emp);
-                      // 共通の属性判定関数を使用
-                      const { isManager, isFlex } = getEmployeeAttributes(emp.employeeName, settings);
+                      const normName = normalizeName(emp.employeeName);
+                      let isManager = settings.managers.includes(normName);
+                      let isFlex = settings.flexEmployees.includes(normName);
+                      
+                      // 従業員リスト表示でもマッピングを考慮して属性アイコンを表示
+                      if (settings.nameMappings) {
+                        const m = settings.nameMappings.find(map => normalizeName(map.nippo) === normName || normalizeName(map.kintai) === normName);
+                        if(m) {
+                           const kn = normalizeName(m.kintai);
+                           const nn = normalizeName(m.nippo);
+                           if(settings.managers.includes(kn) || settings.managers.includes(nn)) isManager=true;
+                           if(settings.flexEmployees.includes(kn) || settings.flexEmployees.includes(nn)) isFlex=true;
+                        }
+                      }
 
                       return (<button key={key} onClick={() => setSelectedId(key)} className={`w-full p-3 rounded-2xl text-left transition-all flex items-center justify-between border ${selectedId === key ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg scale-105 z-10' : 'bg-white border-slate-200 hover:bg-slate-50'}`}><div className="truncate flex-1"><div className={`text-[9px] font-mono ${selectedId === key ? 'text-indigo-200' : 'text-slate-400'}`}>{emp.employeeId}</div><div className="font-bold truncate text-sm flex items-center gap-1">{emp.employeeName}{isManager && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 rounded">管</span>}{isFlex && <span className="text-[9px] bg-orange-100 text-orange-700 px-1 rounded">F</span>}{isMismatch && <span className="w-2 h-2 rounded-full bg-rose-500"></span>}{isMissingReport && <span className="w-2 h-2 rounded-full bg-amber-500 ml-1"></span>}</div></div><ChevronRight className={`w-4 h-4 shrink-0 ${selectedId === key ? 'opacity-100' : 'opacity-20'}`} /></button>);
                     })}
