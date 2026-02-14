@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.9.20)</title>
+  <title>勤怠・日報比較ツール (Ver.9.21)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1531,11 +1531,15 @@
           const parser = new AttendanceFileParser(xlsx);
           const parsedData = await parser.processFiles(files, settings);
           
+          let finalSettings = settings;
           if (parsedData.restoredSettings) {
-              setSettings(parsedData.restoredSettings);
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(parsedData.restoredSettings));
+              finalSettings = parsedData.restoredSettings;
+              setSettings(finalSettings);
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(finalSettings));
           }
-          setEmployees(parsedData.employees); 
+          // 強制再計算
+          const finalEmployees = recalcEmployees(parsedData.employees, finalSettings);
+          setEmployees(finalEmployees); 
           setFileMeta(parsedData.meta || {});
           setFiles([]);
           if (fileInputRef.current) fileInputRef.current.value = "";
@@ -1553,7 +1557,7 @@
         // --- Metadata Sheet Creation ---
         const metaRows = [
             ["Property", "Value"],
-            ["ExportVersion", "9.19"],
+            ["ExportVersion", "9.20"],
             ["ManagerCount", employeeSummary.managerCount],
             ["GeneralCount", employeeSummary.generalCount],
             ["FlexCount", employeeSummary.flexCount],
