@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.9.16)</title>
+  <title>勤怠・日報比較ツール (Ver.9.19)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -102,7 +102,7 @@
 
     // --- ヘルパー関数 ---
     const parseSpecialTime = (val) => {
-      if (val === null || val === undefined || val === '') return 0;
+      if (val === null || val === undefined || val === '' || val === '-') return 0;
       const str = String(val).trim().replace(',', '.');
       if (str.includes(':')) {
         const [h, m] = str.split(':').map(Number);
@@ -166,7 +166,7 @@
                     <li><strong>勤務表:</strong> <code className="bg-white px-2 py-1 rounded border">.xlsx</code> または <code className="bg-white px-2 py-1 rounded border">.csv</code></li>
                     <li><strong>日報:</strong> <code className="bg-white px-2 py-1 rounded border">.xls</code> または <code className="bg-white px-2 py-1 rounded border">.csv</code></li>
                     <li className="text-indigo-600 font-bold"><strong>服務簿:</strong> <code className="bg-white px-2 py-1 rounded border">服務簿一括出力_*.csv</code></li>
-                    <li><strong>一括読込:</strong> フォルダ選択で一括読み込み可能。</li>
+                    <li><strong>保存データの復元:</strong> 本ツールで保存した <code className="bg-white px-2 py-1 rounded border">.xlsx</code> ファイルを読み込むことで、データを復元できます。</li>
                   </ul>
                 </div>
               </section>
@@ -433,9 +433,7 @@
     class AttendanceFileParser {
       constructor(xlsx) { 
         this.xlsx = xlsx; 
-        // 氏名(正規化後)をキーとする一時保管マップ
         this.tempMap = {}; 
-        // { "YAMADATARO": { displayName: "山田 太郎", ids: { service: null, schedule: null, report: null }, schedule: [], report: [], serviceRecord: [], rawServiceData: {}, warnings: [] } }
       }
 
       async parseFile(file) {
@@ -445,28 +443,23 @@
             try {
               const data = new Uint8Array(e.target.result);
               const workbook = this.xlsx.read(data, { type: 'array', cellDates: false, codepage: 932, cellFormula: false });
-              const rows = this.xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '', raw: false });
-              resolve({ rows, fileName: file.name });
+              resolve({ workbook, fileName: file.name });
             } catch (error) { reject(error); }
           };
           reader.readAsArrayBuffer(file);
         });
       }
 
-      // 名前からエントリを取得または作成 (settingsを追加)
       getOrInitEntry(name, id, sourceType, settings) {
         let normName = normalizeName(name);
         let displayName = name;
 
-        // 名寄せロジック: 設定にある旧姓・新姓マッピングをチェックし、統合する
         if (settings && settings.nameMappings) {
             const mapping = settings.nameMappings.find(m => 
               normalizeName(m.kintai) === normName || normalizeName(m.nippo) === normName
             );
             if (mapping) {
-              // マッピングが見つかったら、キーを「旧姓(nippo)の正規化名」に統一する
               normName = normalizeName(mapping.nippo);
-              // 表示名は「旧姓」にする (優先表示)
               displayName = mapping.nippo;
             }
         }
@@ -481,14 +474,13 @@
             schedule: [],
             report: [],
             serviceRecord: [],
-            rawServiceData: { name: name, days: {} }, // 服務簿の一時保存用
+            rawServiceData: { name: name, days: {} },
             warnings: []
           };
         }
         
         const entry = this.tempMap[normName];
         
-        // ソースごとのIDを保存（優先度処理のため）
         if (id) {
             const normId = normalizeId(id);
             if (sourceType === 'service') entry.ids.service = normId;
@@ -496,8 +488,6 @@
             if (sourceType === 'report') entry.ids.report = normId;
         }
         
-        // 表示名の更新 (マッピング適用済みなら更新しない、そうでなければ服務簿名を優先)
-        // ※マッピングがある場合は上記でdisplayNameを旧姓に固定済み
         const isMapped = settings && settings.nameMappings && settings.nameMappings.some(m => normalizeName(m.nippo) === normName);
         if (!isMapped && sourceType === 'service' && name) {
             entry.displayName = name;
@@ -506,7 +496,6 @@
         return entry;
       }
 
-      // 配列へのデータ追加・更新（クラスメソッド化）
       upsertRecord(array, record) {
         const idx = array.findIndex(r => r.day === record.day);
         if (idx >= 0) {
@@ -536,7 +525,6 @@
         }
       }
 
-      // 服務簿の集計結果保存用
       upsertServiceRecord(array, record) {
         const idx = array.findIndex(r => r.day === record.day);
         if (idx >= 0) {
@@ -546,13 +534,67 @@
         }
       }
 
+      extractYearMonth(rows) {
+        for (let i = 0; i < 50 && i < rows.length; i++) {
+          const rowStr = (rows[i] || []).join(' ');
+          const m = rowStr.match(/(\d{4})[\u5e74/](\d{1,2})/); 
+          if (m) {
+            return `${m[1]}${m[2].padStart(2, '0')}`;
+          }
+        }
+        return null;
+      }
+
       async processFiles(files, settings) {
-        this.tempMap = {}; // 初期化
+        this.tempMap = {};
+        let detectedYearMonth = null;
+        let restoredSettings = null;
 
         for (const file of files) {
           try {
-            const { rows, fileName } = await this.parseFile(file);
-              
+            const { workbook, fileName } = await this.parseFile(file);
+            
+            // Check for saved Excel file (Metadata sheet)
+            if (workbook.SheetNames.includes("_Metadata")) {
+               const metaSheet = workbook.Sheets["_Metadata"];
+               const metaRows = this.xlsx.utils.sheet_to_json(metaSheet, {header: 1});
+               
+               const getVal = (key) => {
+                   const row = metaRows.find(r => r[0] === key);
+                   return row ? row[1] : null;
+               };
+               
+               const settingsJsonM = getVal("Settings_Managers");
+               const settingsJsonF = getVal("Settings_Flex");
+               const settingsJsonN = getVal("Settings_Mappings");
+               
+               if (settingsJsonM || settingsJsonF || settingsJsonN) {
+                   restoredSettings = {
+                       managers: settingsJsonM ? JSON.parse(settingsJsonM) : settings.managers,
+                       flexEmployees: settingsJsonF ? JSON.parse(settingsJsonF) : settings.flexEmployees,
+                       nameMappings: settingsJsonN ? JSON.parse(settingsJsonN) : settings.nameMappings
+                   };
+                   // Apply restored settings immediately for subsequent processing in this batch
+                   settings = restoredSettings;
+               }
+               
+               // Restore employees from sheets
+               workbook.SheetNames.forEach(sheetName => {
+                   if (sheetName === "_Metadata") return;
+                   const sheet = workbook.Sheets[sheetName];
+                   const sheetRows = this.xlsx.utils.sheet_to_json(sheet, {header: 1});
+                   this.parseRestoredSheet(sheetRows, settings);
+               });
+               
+               continue; // Skip standard parsing for this file
+            }
+
+            const rows = this.xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '', raw: false });
+            
+            if (!detectedYearMonth) {
+              detectedYearMonth = this.extractYearMonth(rows);
+            }
+
             let isSchedule = false;
             if (fileName.includes('勤務表')) {
                const m1Val = (rows.length > 0 && rows[0] && rows[0][12]) ? String(rows[0][12]) : '';
@@ -576,11 +618,10 @@
           } catch (e) { console.error(e); }
         }
         
-        // 服務簿データの集計と統合
+        // 服務簿データの集計（復元データの場合はrawServiceDataがないのでスキップされる）
         Object.values(this.tempMap).forEach(entry => {
             const tempSvc = entry.rawServiceData;
             if (tempSvc && Object.keys(tempSvc.days).length > 0) {
-                // フレックス判定
                 const normName = entry.normalizedName;
                 let isFlex = settings.flexEmployees.includes(normName);
                 if (settings.nameMappings) {
@@ -600,16 +641,12 @@
             }
         });
 
-        // 最終的なemployeesオブジェクト（IDキー）に変換
         const finalEmployees = {};
         Object.values(this.tempMap).forEach(entry => {
-            // ID決定: 服務簿 > 勤務表 > 日報 > 仮ID
             let finalId = entry.ids.service || entry.ids.schedule || entry.ids.report || `TEMP-${entry.normalizedName}`;
-            
             if (finalEmployees[finalId]) {
                 finalId = `${finalId}_${entry.normalizedName}`;
             }
-
             finalEmployees[finalId] = {
                 employeeId: finalId,
                 employeeName: entry.displayName,
@@ -620,10 +657,107 @@
             };
         });
 
-        return finalEmployees;
+        return { employees: finalEmployees, meta: { yearMonth: detectedYearMonth }, restoredSettings };
       }
 
-      // --- 各パースメソッドの改修（settingsを渡す） ---
+      parseRestoredSheet(rows, settings) {
+          // Identify Employee Name and ID
+          let empName = "";
+          let empId = "";
+          
+          // Header search (row 0-15)
+          for(let i=0; i<15; i++) {
+              if (rows[i] && rows[i].length > 0) {
+                  const cell0 = String(rows[i][0] || "");
+                  const cell1 = String(rows[i][1] || "");
+                  
+                  if (cell0.startsWith("社員名:")) {
+                      // Extract full name (ignoring potential split into next column if space exists)
+                      // Export format is consistent: cell0 contains "社員名: Full Name"
+                      empName = cell0.substring(4).trim();
+                  }
+                  if (cell1.startsWith("ID:")) {
+                      empId = cell1.substring(3).trim();
+                  }
+              }
+          }
+          if (!empName) return;
+
+          const entry = this.getOrInitEntry(empName, empId, 'service', settings);
+          
+          // Find Data Header
+          let headerRow = -1;
+          for(let i=0; i<rows.length; i++) {
+              if (rows[i] && rows[i][0] === "日付" && String(rows[i][2]).includes("勤務表")) {
+                  headerRow = i;
+                  break;
+              }
+          }
+          if (headerRow === -1) return;
+
+          for(let i=headerRow+1; i<rows.length; i++) {
+              const row = rows[i];
+              const day = parseInt(row[0]);
+              if (isNaN(day)) continue;
+
+              // Schedule Restore
+              const schTimeParts = String(row[3] || "").split("-");
+              // Remove automatically appended labels to prevent duplication
+              let schStatus = String(row[2] || "");
+              schStatus = schStatus.replace(/,?\s*時間年休/g, "").trim();
+              if(schStatus.startsWith(",")) schStatus = schStatus.substring(1).trim();
+
+              this.upsertRecord(entry.schedule, {
+                  day: day,
+                  weekday: row[1],
+                  status: schStatus,
+                  startTime: schTimeParts[0] || "",
+                  endTime: schTimeParts[1] || "",
+                  regularTime: parseSpecialTime(row[4]),
+                  overtime: parseSpecialTime(row[5]),
+                  nightTime: parseSpecialTime(row[6]),
+                  timeAnnualLeave: parseSpecialTime(row[7])
+              });
+
+              // Service Record Restore
+              const svcTimeParts = String(row[9] || "").split("-");
+              const rawSvcStatus = String(row[8] || "");
+              const svcItems = rawSvcStatus.split(",").map(s => s.trim()).filter(s => s);
+              
+              // システムステータス（承認、反映を含むもの）を抽出
+              const sysStatusItems = svcItems.filter(s => s.includes("承認") || s.includes("反映"));
+              const sysStatus = sysStatusItems.join(", ");
+
+              // typesにはシステムステータス以外のものを設定
+              const typeItems = svcItems.filter(s => !s.includes("承認") && !s.includes("反映"));
+              
+              this.upsertServiceRecord(entry.serviceRecord, {
+                  day: day,
+                  status: sysStatus,
+                  startTime: svcTimeParts[0] || "",
+                  endTime: svcTimeParts[1] || "",
+                  regularTime: parseSpecialTime(row[10]),
+                  overtime: parseSpecialTime(row[11]),
+                  nightTime: parseSpecialTime(row[12]),
+                  timeAnnualLeave: parseSpecialTime(row[13]),
+                  types: typeItems // 修正: 重複しないようにフィルタリング済みの配列を使用
+              });
+
+              // Report Restore
+              let repStartTime = row[15] || ""; 
+              let repStatus = String(row[14] || "");
+              this.upsertRecord(entry.report, {
+                  day: day,
+                  status: repStatus,
+                  startTime: repStartTime, 
+                  regularTime: parseSpecialTime(row[16]),
+                  overtime: parseSpecialTime(row[17]),
+                  nightTime: parseSpecialTime(row[18]),
+                  nightWorkVal: row[19] || "",
+                  holidayWork: (repStatus.includes("休出")) ? 1 : 0 
+              });
+          }
+      }
 
       parseServiceRecord(rows, settings) {
         let colMap = null;
@@ -873,7 +1007,6 @@
         }
       }
 
-      // --- aggregateServiceRecord はロジック変更なしのため省略せず再利用 ---
       aggregateServiceRecord(empId, day, records, isFlexEmployee) {
           const hasFlexRecord = records.some(r => r.type === 'フレックス');
           const isFlexMode = isFlexEmployee || hasFlexRecord;
@@ -1055,6 +1188,7 @@
       const [files, setFiles] = useState([]);
       const [isProcessing, setIsProcessing] = useState(false);
       const [employees, setEmployees] = useState({}); 
+      const [fileMeta, setFileMeta] = useState({}); 
       const [selectedId, setSelectedId] = useState(null);
       const [view, setView] = useState('input');
       const [showSettings, setShowSettings] = useState(false);
@@ -1118,13 +1252,11 @@
           let normName = normalizeName(emp.employeeName);
           let targetName = emp.employeeName;
           
-          // マッピング適用
           if (newSettings.nameMappings) {
             const mapping = newSettings.nameMappings.find(m => 
               normalizeName(m.kintai) === normName || normalizeName(m.nippo) === normName
             );
             if (mapping) {
-              // 旧姓(nippo)をキーとして統合
               normName = normalizeName(mapping.nippo);
               targetName = mapping.nippo;
             }
@@ -1349,7 +1481,6 @@
             const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentName || normalizeName(m.kintai) === currentName);
             if (mapping) {
                 currentName = normalizeName(mapping.nippo);
-                // マッピングされた名前のどちらかがリストにあれば属性を付与
                 const kintaiName = normalizeName(mapping.kintai);
                 if (settings.managers.includes(currentName) || settings.managers.includes(kintaiName)) isManager = true;
                 if (settings.flexEmployees.includes(currentName) || settings.flexEmployees.includes(kintaiName)) isFlex = true;
@@ -1360,19 +1491,14 @@
           else if (isManager) managerCount++; 
           else generalCount++;
           
+          if (analyzeEmployeeMismatch(emp, isManager, isFlex, limitDay)) mismatchEmployees.push(emp);
+
           const hasService = emp.serviceRecord.length > 0;
           const hasSchedule = emp.schedule.length > 0;
           const hasReport = emp.report.some(r => r.status || r.regularTime > 0 || r.overtime > 0);
           
-          let isMissing = false;
           if ((hasService || hasSchedule) && !hasReport) {
               missingReportEmployees.push(emp);
-              isMissing = true;
-          }
-
-          // 日報未提出者は不整合リストには含めない (重複防止)
-          if (!isMissing) {
-            if (analyzeEmployeeMismatch(emp, isManager, isFlex, limitDay)) mismatchEmployees.push(emp);
           }
         });
         return { managerCount, generalCount, flexCount, mismatchEmployees, missingReportEmployees };
@@ -1384,12 +1510,182 @@
         try {
           const parser = new AttendanceFileParser(xlsx);
           const parsedData = await parser.processFiles(files, settings);
-          setEmployees(parsedData); 
+          
+          if (parsedData.restoredSettings) {
+              setSettings(parsedData.restoredSettings);
+          }
+          setEmployees(parsedData.employees); 
+          setFileMeta(parsedData.meta || {});
           setFiles([]);
           if (fileInputRef.current) fileInputRef.current.value = "";
           if (folderInputRef.current) folderInputRef.current.value = "";
           setView('dashboard');
         } catch (error) { alert(`エラー: ${error.message}`); } finally { setIsProcessing(false); }
+      };
+
+      // Export Function
+      const handleExport = () => {
+        if (!xlsx) return;
+        const wb = xlsx.utils.book_new();
+        const limitDay = checkMode === 'day20' ? 20 : 31;
+        
+        // --- Metadata Sheet Creation ---
+        const metaRows = [
+            ["Property", "Value"],
+            ["ExportVersion", "9.19"],
+            ["ManagerCount", employeeSummary.managerCount],
+            ["GeneralCount", employeeSummary.generalCount],
+            ["FlexCount", employeeSummary.flexCount],
+            ["MismatchCount", employeeSummary.mismatchEmployees.length],
+            ["Settings_Managers", JSON.stringify(settings.managers)],
+            ["Settings_Flex", JSON.stringify(settings.flexEmployees)],
+            ["Settings_Mappings", JSON.stringify(settings.nameMappings)],
+            ["Mismatch_List", employeeSummary.mismatchEmployees.map(e=>e.employeeName).join(", ")],
+            ["MissingReport_List", employeeSummary.missingReportEmployees.map(e=>e.employeeName).join(", ")]
+        ];
+        const wsMeta = xlsx.utils.aoa_to_sheet(metaRows);
+        xlsx.utils.book_append_sheet(wb, wsMeta, "_Metadata");
+
+        Object.values(employees).forEach(emp => {
+          let currentNameNorm = normalizeName(emp.employeeName);
+          let isManager = settings.managers.includes(currentNameNorm);
+          let isFlex = settings.flexEmployees.includes(currentNameNorm);
+          
+          if (settings.nameMappings) {
+            const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentNameNorm || normalizeName(m.kintai) === currentNameNorm);
+            if (mapping) {
+              const kintaiName = normalizeName(mapping.kintai);
+              if (settings.managers.includes(kintaiName) || settings.managers.includes(currentNameNorm)) isManager = true;
+              if (settings.flexEmployees.includes(kintaiName) || settings.flexEmployees.includes(currentNameNorm)) isFlex = true;
+            }
+          }
+
+          const rows = [];
+          
+          const scheduleMap = {};
+          emp.schedule.forEach(s => scheduleMap[s.day] = s);
+          const serviceMap = {};
+          emp.serviceRecord.forEach(s => serviceMap[s.day] = s);
+          
+          const results = [];
+          for (let day = 1; day <= limitDay; day++) {
+             const sch = scheduleMap[day] || {};
+             const rep = emp.report.find(r => r.day === day) || {};
+             const svc = serviceMap[day] || {};
+             const nextDaySch = scheduleMap[day+1] || null;
+             const nextDaySvc = serviceMap[day+1] || null;
+             
+             if (!sch.status && !rep.status && !svc.status && !sch.overtime && !rep.overtime && !svc.startTime && !sch.regularTime && !rep.regularTime) continue;
+
+             const check = checkDailyMismatch(sch, rep, svc, isManager, isFlex, nextDaySch, nextDaySvc);
+             
+             let schStatusStr = sch.status || '';
+             if (sch.special) schStatusStr += (schStatusStr ? `, ${sch.special}` : sch.special);
+             if (sch.timeAnnualLeave > 0) schStatusStr += (schStatusStr ? ', 時間年休' : '時間年休');
+
+             let svcStatusStr = svc.status || '';
+             if (svc.types && svc.types.length > 0) {
+                 const typesStr = svc.types.join(', ');
+                 svcStatusStr += (svcStatusStr ? `, ${typesStr}` : typesStr);
+             }
+
+             let repStatusStr = rep.status || '';
+             if (rep.startTime) repStatusStr = '記録あり ' + repStatusStr;
+             if (rep.holidayWork > 0) repStatusStr += ' 休出';
+             if (check.isNightWorkDay) repStatusStr += ' 夜業'; 
+             if (rep.nightWorkVal) repStatusStr += ` (夜業${rep.nightWorkVal})`;
+
+             results.push({
+                 day, weekday: sch.weekday || '',
+                 sch, rep, svc, check,
+                 schStatusStr, svcStatusStr, repStatusStr
+             });
+          }
+
+          const isRegOK = results.every(r => Math.abs(r.check.diffRegular) < 0.01 || r.check.isSpecialCase);
+          const isOverOK = results.every(r => Math.abs(r.check.diffOvertime) < 0.01);
+          const isNightInputOK = results.every(r => Math.abs(r.check.diffNight) < 0.01 && !r.check.nightWorkCheckNG && !r.check.nightWorkMessage);
+          
+          let nightWorkDays = 0, hibanDays = 0, weekHolidayWorkCount = 0, compensatoryLeaveCount = 0;
+          let saturdayHibanCount = 0, saturdayHibanMismatch = false;
+
+          results.forEach(r => {
+              const base = r.check.base;
+              if (r.check.isNightWorkDay) nightWorkDays++;
+              const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
+              if (isHiban) hibanDays++;
+              if (base.types && base.types.some(t => t.includes('週休出') && t.includes('不算入'))) weekHolidayWorkCount++;
+              if (base.types && base.types.some(t => t.includes('振休') || t.includes('振替休日'))) compensatoryLeaveCount++;
+              else if (!base.types && base.status && (base.status.includes('振休') || base.status.includes('振替休日'))) compensatoryLeaveCount++;
+              
+              const isSat = r.weekday.includes('土');
+              const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
+              if (isSat && isSvcHiban) {
+                  saturdayHibanCount++;
+                  const mondayRow = results.find(rr => rr.day === r.day + 2);
+                  let hasMondayTarget = false;
+                  if (mondayRow) {
+                      const mSvc = mondayRow.svc;
+                      hasMondayTarget = (mSvc.types && mSvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
+                                     || (!mSvc.types && mSvc.status && (mSvc.status.includes('振休') || mSvc.status.includes('振替休日')));
+                  }
+                  if (!hasMondayTarget) saturdayHibanMismatch = true;
+              }
+          });
+          
+          let nightWorkMismatch = (!isManager && nightWorkDays !== hibanDays);
+          let compensatoryLeaveMismatch = (weekHolidayWorkCount !== compensatoryLeaveCount);
+
+          rows.push([`社員名: ${emp.employeeName}`, `ID: ${emp.employeeId}`]);
+          rows.push([`対象年月: ${fileMeta.yearMonth || '不明'} (※自動検出)`]);
+          rows.push(["【判定サマリー】"]);
+          rows.push(["所定内一致", isRegOK ? "OK" : "NG"]);
+          rows.push(["残業一致", isOverOK ? "OK" : "NG"]);
+          rows.push(["夜業入力チェック", isNightInputOK ? "OK" : "NG"]);
+          rows.push(["夜業/非番回数突合", !nightWorkMismatch ? "OK" : "NG", `(夜${nightWorkDays}/非${hibanDays})`]);
+          rows.push(["振休取得突合", !compensatoryLeaveMismatch ? "OK" : "NG", `(出${weekHolidayWorkCount}/休${compensatoryLeaveCount})`]);
+          if(saturdayHibanCount > 0) {
+              rows.push(["土曜非番対応", !saturdayHibanMismatch ? "OK" : "NG"]);
+          }
+          if(emp.warnings && emp.warnings.length > 0) {
+              rows.push(["重要警告", emp.warnings.join(", ")]);
+          }
+          rows.push([]); 
+
+          rows.push([
+            "日付", "曜日", 
+            "【勤務表】ステータス(全)", "【勤務表】開始-終了", "【勤務表】所定内", "【勤務表】時間外", "【勤務表】深夜", "【勤務表】時間年休",
+            "【服務簿】ステータス(全)", "【服務簿】開始-終了", "【服務簿】所定内", "【服務簿】時間外", "【服務簿】深夜", "【服務簿】時間年休",
+            "【日報】ステータス(全)", "【日報】開始", "【日報】所定内", "【日報】時間外", "【日報】深夜", "【日報】夜業値",
+            "判定", "警告メッセージ"
+          ]);
+
+          results.forEach(r => {
+             const row = [
+               r.day, r.weekday,
+               r.schStatusStr, (r.sch.startTime ? `${r.sch.startTime}-${r.sch.endTime}` : ''), formatSpecialTime(r.sch.regularTime), formatSpecialTime(r.sch.overtime), formatSpecialTime(r.sch.nightTime), formatSpecialTime(r.sch.timeAnnualLeave),
+               r.svcStatusStr, (r.svc.startTime ? `${r.svc.startTime}-${r.svc.endTime}` : ''), formatSpecialTime(r.svc.regularTime), formatSpecialTime(r.svc.overtime), formatSpecialTime(r.svc.nightTime), formatSpecialTime(r.svc.timeAnnualLeave),
+               r.repStatusStr, r.rep.startTime || '', formatSpecialTime(r.rep.regularTime), formatSpecialTime(r.rep.overtime), formatSpecialTime(r.rep.nightTime), r.rep.nightWorkVal || '',
+               r.check.hasMismatch ? 'NG' : 'OK', r.check.warningMessage || r.check.nightWorkMessage || ''
+             ];
+             rows.push(row);
+          });
+          
+          const ws = xlsx.utils.aoa_to_sheet(rows);
+          let sheetName = emp.employeeName.slice(0, 25); 
+          let uniqueName = sheetName;
+          let counter = 1;
+          while (wb.SheetNames.includes(uniqueName)) {
+            uniqueName = `${sheetName}_${counter++}`;
+          }
+          xlsx.utils.book_append_sheet(wb, ws, uniqueName);
+        });
+        
+        const fileName = fileMeta.yearMonth 
+            ? `勤怠比較結果_${fileMeta.yearMonth}.xlsx` 
+            : `勤怠比較結果_${new Date().toISOString().slice(0,7).replace(/-/g,'')}.xlsx`;
+
+        xlsx.writeFile(wb, fileName);
       };
 
       const employeeList = useMemo(() => Object.values(employees), [employees]);
@@ -1404,7 +1700,6 @@
         if (settings.nameMappings) {
           const mapping = settings.nameMappings.find(m => normalizeName(m.nippo) === currentNameNorm || normalizeName(m.kintai) === currentNameNorm);
           if (mapping) {
-            // マッピングがある場合、日報名(currentNameNorm)または勤務表名のどちらかがフレックスリストにあればフレックスとする
             const kintaiName = normalizeName(mapping.kintai);
             if (settings.managers.includes(kintaiName) || settings.managers.includes(currentNameNorm)) isManager = true;
             if (settings.flexEmployees.includes(kintaiName) || settings.flexEmployees.includes(currentNameNorm)) isFlex = true;
@@ -1486,11 +1781,17 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.16)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応版</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.9.19)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
               <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white text-slate-600 border hover:bg-slate-50 transition-colors"><Settings className="w-4 h-4" /> 設定</button>
+              
+              {/* --- 結果保存ボタン --- */}
+              <button onClick={handleExport} disabled={employeeList.length === 0} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <Download className="w-4 h-4" /> 結果保存
+              </button>
+
               <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
                 <button onClick={() => setView('input')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'input' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>ファイル登録</button>
                 <button onClick={() => setView('dashboard')} disabled={employeeList.length === 0} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'dashboard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50 disabled:opacity-30'}`}>比較ボード</button>
