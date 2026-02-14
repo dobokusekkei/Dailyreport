@@ -455,7 +455,7 @@
         for (const file of files) {
           try {
             const { rows, fileName } = await this.parseFile(file);
-            
+             
             let isSchedule = false;
             if (fileName.includes('勤務表')) {
                const m1Val = (rows.length > 0 && rows[0] && rows[0][12]) ? String(rows[0][12]) : '';
@@ -672,7 +672,7 @@
                   if (r.type.includes('時間年休')) {
                       timeAnnualLeave += parseSpecialTime(r.time);
                       if (r.startTime && r.endTime) {
-                           timeAnnualLeaveDetails.push(`${r.startTime}-${r.endTime}`);
+                            timeAnnualLeaveDetails.push(`${r.startTime}-${r.endTime}`);
                       }
                       
                       // 表示用時刻の調整（所定内の開始・終了に合わせて取得した場合）
@@ -1328,15 +1328,29 @@
         
         let nightWorkCount = 0;
         let hibanCount = 0;
+        
+        // 追加: 振休突合用
+        let weekHolidayWorkCount = 0;
+        let compensatoryLeaveCount = 0;
+        
+        // 追加: 土曜非番チェック用
+        let saturdayHibanCheckNG = false;
+
+        // データマップ作成（高速アクセス用）
+        const scheduleMap = {};
+        emp.schedule.forEach(s => scheduleMap[s.day] = s);
+        const serviceMap = {};
+        emp.serviceRecord.forEach(s => serviceMap[s.day] = s);
 
         for (let day = 1; day <= limitDay; day++) {
-          const sch = emp.schedule.find(r => r.day === day) || {};
+          const sch = scheduleMap[day] || {};
           const rep = emp.report.find(r => r.day === day) || {};
-          const svc = emp.serviceRecord.find(r => r.day === day) || {}; // 服務簿
-          const nextDaySch = emp.schedule.find(r => r.day === day + 1) || null;
-          const nextDaySvc = emp.serviceRecord.find(r => r.day === day + 1) || null;
+          const svc = serviceMap[day] || {};
+          
+          if (sch.status || rep.status || svc.status || sch.overtime > 0 || rep.overtime > 0 || svc.startTime || sch.regularTime > 0 || rep.regularTime > 0) {
+            const nextDaySch = scheduleMap[day+1];
+            const nextDaySvc = serviceMap[day+1];
 
-          if (sch.status || rep.status || svc.status || sch.overtime > 0 || rep.overtime > 0) {
             const res = checkDailyMismatch(sch, rep, svc, isManager, isFlex, nextDaySch, nextDaySvc);
             if (res.hasMismatch) { hasError = true; }
             
@@ -1345,6 +1359,29 @@
             if (res.isNightWorkDay) nightWorkCount++;
             const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
             if (isHiban) hibanCount++;
+            
+            // 振休突合用カウント
+            if (base.types && base.types.some(t => t.includes('週休出') && t.includes('不算入'))) weekHolidayWorkCount++;
+            if (base.types && base.types.some(t => t.includes('振休') || t.includes('振替休日'))) compensatoryLeaveCount++;
+            else if (!base.types && base.status && (base.status.includes('振休') || base.status.includes('振替休日'))) compensatoryLeaveCount++;
+            
+            // 土曜非番チェック (服務簿ベース)
+            // 曜日判定はschから取る
+            const weekday = sch.weekday || '';
+            const isSat = weekday.includes('土');
+            // 服務簿で非番か
+            const isSvcHiban = svc.types ? svc.types.some(t => t.includes('非番')) : (svc.status && svc.status.includes('非番'));
+            
+            if (isSat && isSvcHiban) {
+                // 月曜(day+2)チェック
+                const mondaySvc = serviceMap[day+2] || {};
+                const hasMondayTarget = (mondaySvc.types && mondaySvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
+                                     || (!mondaySvc.types && mondaySvc.status && (mondaySvc.status.includes('振休') || mondaySvc.status.includes('振替休日')));
+                
+                if (!hasMondayTarget) {
+                    saturdayHibanCheckNG = true;
+                }
+            }
           }
         }
         
@@ -1352,6 +1389,12 @@
         if (!isManager) {
             if (nightWorkCount !== hibanCount) hasError = true;
         }
+        
+        // 追加: 振休突合NGチェック
+        if (weekHolidayWorkCount !== compensatoryLeaveCount) hasError = true;
+        
+        // 追加: 土曜非番チェックNG
+        if (saturdayHibanCheckNG) hasError = true;
         
         return hasError;
       };
@@ -1482,6 +1525,9 @@
         
         let weekHolidayWorkCount = 0;
         let compensatoryLeaveCount = 0;
+        
+        let saturdayHibanCount = 0;
+        let saturdayHibanMismatch = false;
 
         result.forEach(r => {
             const base = r.base; // 基準レコード
@@ -1497,6 +1543,29 @@
             // 振休カウント
             if (base.types && base.types.some(t => t.includes('振休') || t.includes('振替休日'))) compensatoryLeaveCount++;
             else if (!base.types && base.status && (base.status.includes('振休') || base.status.includes('振替休日'))) compensatoryLeaveCount++;
+            
+            // 土曜非番チェック
+            const isSat = r.weekday.includes('土');
+            // 服務簿で非番か
+            const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
+            
+            if (isSat && isSvcHiban) {
+                saturdayHibanCount++;
+                // 月曜(day+2)のデータを探す (resultに含まれていない場合も考慮し元のデータソースから探すべきだが、
+                // resultは hasData でフィルタされている。月曜にデータがない＝入力なし＝NG なので result から探してもOK)
+                const mondayRow = result.find(rr => rr.day === r.day + 2);
+                let hasMondayTarget = false;
+                
+                if (mondayRow) {
+                    const mSvc = mondayRow.svc;
+                    hasMondayTarget = (mSvc.types && mSvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
+                                   || (!mSvc.types && mSvc.status && (mSvc.status.includes('振休') || mSvc.status.includes('振替休日')));
+                }
+                
+                if (!hasMondayTarget) {
+                    saturdayHibanMismatch = true;
+                }
+            }
         });
         
         // 管理職は回数突合しない
@@ -1505,7 +1574,7 @@
         // 振休突合
         const compensatoryLeaveMismatch = (weekHolidayWorkCount !== compensatoryLeaveCount);
 
-        return { rows: result, summary: { nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch }, isManager, isFlex };
+        return { rows: result, summary: { nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch, saturdayHibanCount, saturdayHibanMismatch }, isManager, isFlex };
       }, [currentEmployee, settings, checkMode]);
 
       const selectEmployeeByKey = (emp) => setSelectedId(Object.keys(employees).find(k => employees[k] === emp));
@@ -1607,7 +1676,14 @@
                              <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffRegular) < 0.01 || d.isSpecialCase) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>所定内: {comparisonData.rows.every(d => Math.abs(d.diffRegular) < 0.01 || d.isSpecialCase) ? 'OK' : 'NG'}</div>
                              <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>残業: {comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) ? 'OK' : 'NG'}</div>
                              <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>夜業入力: {comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'OK' : 'NG'}</div>
-                             <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>翌日非番: {comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'OK' : 'NG'}</div>
+                             <div className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => d.nextDayCheckOK !== false) && !comparisonData.summary.saturdayHibanMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>
+                               翌日非番: {comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'OK' : 'NG'}
+                               {comparisonData.summary.saturdayHibanCount > 0 && (
+                                 <span className={`block text-[9px] font-normal ${!comparisonData.summary.saturdayHibanMismatch ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
+                                   土曜非番対応: {!comparisonData.summary.saturdayHibanMismatch ? 'OK' : 'NG'}
+                                 </span>
+                               )}
+                             </div>
                              <div className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.nightWorkMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>
                                夜業突合: {!comparisonData.summary.nightWorkMismatch ? 'OK' : 'NG'} 
                                <span className="block text-[9px] font-normal text-slate-500">(夜{comparisonData.summary.nightWorkDays}/非{comparisonData.summary.hibanDays})</span>
