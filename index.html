@@ -1360,14 +1360,19 @@
           else if (isManager) managerCount++; 
           else generalCount++;
           
-          if (analyzeEmployeeMismatch(emp, isManager, isFlex, limitDay)) mismatchEmployees.push(emp);
-
           const hasService = emp.serviceRecord.length > 0;
           const hasSchedule = emp.schedule.length > 0;
           const hasReport = emp.report.some(r => r.status || r.regularTime > 0 || r.overtime > 0);
           
+          let isMissing = false;
           if ((hasService || hasSchedule) && !hasReport) {
               missingReportEmployees.push(emp);
+              isMissing = true;
+          }
+
+          // 日報未提出者は不整合リストには含めない (重複防止)
+          if (!isMissing) {
+            if (analyzeEmployeeMismatch(emp, isManager, isFlex, limitDay)) mismatchEmployees.push(emp);
           }
         });
         return { managerCount, generalCount, flexCount, mismatchEmployees, missingReportEmployees };
