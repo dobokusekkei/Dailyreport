@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.11.5)</title>
+  <title>勤怠・日報比較ツール (Ver.11.6)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1706,7 +1706,7 @@
         
         const metaRows = [
             ["Property", "Value"],
-            ["ExportVersion", "11.4"],
+            ["ExportVersion", "11.6"],
             ["DirectorCount", employeeSummary.directorCount],
             ["ManagerCount", employeeSummary.managerCount],
             ["GeneralCount", employeeSummary.generalCount],
@@ -1804,7 +1804,7 @@
               const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
               if (isSat && isSvcHiban) {
                   saturdayHibanCount++;
-                  const mondayRow = results.find(rr => rr.day === r.day + 2);
+                  const mondayRow = result.find(rr => rr.day === r.day + 2);
                   let hasMondayTarget = false;
                   if (mondayRow) {
                       const mSvc = mondayRow.svc;
@@ -1964,6 +1964,12 @@
             };
           }).filter(d => d.hasData);
         
+        // --- 残業時間合計計算と45時間超過判定 ---
+        const totalOvertimeSch = result.reduce((acc, r) => acc + (r.sch.overtime || 0), 0);
+        const totalOvertimeSvc = result.reduce((acc, r) => acc + (r.svc.overtime || 0), 0);
+        const totalOvertimeRep = result.reduce((acc, r) => acc + (r.rep.overtime || 0), 0);
+        const isOvertimeLimitExceeded = totalOvertimeSch > 45.0 || totalOvertimeSvc > 45.0 || totalOvertimeRep > 45.0;
+
         let nightWorkDays = 0;
         let hibanDays = 0;
         let nightWorkMismatch = false;
@@ -2001,7 +2007,14 @@
         if (!isManager && !isDirector && nightWorkDays !== hibanDays) nightWorkMismatch = true;
         const compensatoryLeaveMismatch = (weekHolidayWorkCount !== compensatoryLeaveCount);
 
-        return { rows: result, summary: { nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch, saturdayHibanCount, saturdayHibanMismatch }, isManager, isDirector, isFlex };
+        return { 
+            rows: result, 
+            summary: { 
+                nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch, saturdayHibanCount, saturdayHibanMismatch,
+                isOvertimeLimitExceeded, totalOvertimeSch, totalOvertimeSvc, totalOvertimeRep 
+            }, 
+            isManager, isDirector, isFlex 
+        };
       }, [currentEmployee, settings, checkMode, employees]); 
 
       const selectEmployeeByKey = (emp) => setSelectedId(Object.keys(employees).find(k => employees[k] === emp));
@@ -2032,7 +2045,16 @@
               });
           }
 
-          // 3. 夜業入力
+          // 3. 残業時間超過(45h)
+          if (d.summary.isOvertimeLimitExceeded) {
+              const items = [];
+              if (d.summary.totalOvertimeSch > 45.0) items.push({ date: '-', message: `勤務表の残業合計: ${formatSpecialTime(d.summary.totalOvertimeSch)}h (45h超過)` });
+              if (d.summary.totalOvertimeSvc > 45.0) items.push({ date: '-', message: `服務簿の残業合計: ${formatSpecialTime(d.summary.totalOvertimeSvc)}h (45h超過)` });
+              if (d.summary.totalOvertimeRep > 45.0) items.push({ date: '-', message: `日報の残業合計: ${formatSpecialTime(d.summary.totalOvertimeRep)}h (45h超過)` });
+              allErrors.push({ category: '残業時間超過(45h)', items });
+          }
+
+          // 4. 夜業入力
           const nightErrors = d.rows.filter(r => Math.abs(r.diffNight) > 0.01 || r.nightWorkCheckNG || r.nightWorkMessage);
           if (nightErrors.length > 0) {
               allErrors.push({
@@ -2048,7 +2070,7 @@
               });
           }
 
-          // 4. 翌日非番 / 土曜非番 / 管理職非番
+          // 5. 翌日非番 / 土曜非番 / 管理職非番
           const nextDayErrors = [];
           if (d.isManager || d.isDirector) {
               if (d.summary.hibanDays > 0) {
@@ -2068,7 +2090,7 @@
               allErrors.push({ category: '非番関連不備', items: nextDayErrors });
           }
 
-          // 5. 夜業突合 (管理職以外)
+          // 6. 夜業突合 (管理職以外)
           if (d.summary.nightWorkMismatch) {
               allErrors.push({
                   category: '夜業/非番回数不一致',
@@ -2078,7 +2100,7 @@
               });
           }
 
-          // 6. 振休突合
+          // 7. 振休突合
           if (d.summary.compensatoryLeaveMismatch) {
               allErrors.push({
                   category: '週休出/振休回数不一致',
@@ -2088,7 +2110,7 @@
               });
           }
 
-          // 7. 重要警告
+          // 8. 重要警告
           if (currentEmployee.warnings && currentEmployee.warnings.length > 0) {
               allErrors.push({
                   category: '重要警告',
@@ -2104,7 +2126,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.4)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.6)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -2259,26 +2281,41 @@
 
                              {/* 残業 */}
                              <div 
-                               className={`p-2 rounded font-bold text-center border cursor-pointer ${comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}
+                               className={`p-2 rounded font-bold text-center border cursor-pointer ${comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}
                                onClick={() => {
                                  const allNg = collectAllNgItems();
                                  if (allNg.length === 0) return;
-                                 setNgDetailData({
-                                   title: '残業不一致 (詳細)',
-                                   items: comparisonData.rows
+                                 
+                                 // このボタン用のアイテムのみ生成
+                                 const items = [];
+                                 
+                                 // 残業不一致
+                                 comparisonData.rows
                                      .filter(d => comparisonData.isFlex ? d.sch.overtime > 0 : Math.abs(d.diffOvertime) > 0.01)
-                                     .map(d => ({
+                                     .forEach(d => items.push({
                                        date: `${d.day}日(${d.weekday})`,
                                        message: comparisonData.isFlex
                                          ? `FLEX残業NG: ${formatSpecialTime(d.sch.overtime)}h`
                                          : `差分: ${formatSpecialTime(d.diffOvertime)}h (勤務表:${formatSpecialTime(d.sch.overtime)} vs 日報:${formatSpecialTime(d.rep.overtime)})`
-                                     })),
+                                     }));
+                                     
+                                 // 45時間超過
+                                 if (comparisonData.summary.isOvertimeLimitExceeded) {
+                                     if (comparisonData.summary.totalOvertimeSch > 45.0) items.push({ date: '-', message: `勤務表の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeSch)}h (45h超過)` });
+                                     if (comparisonData.summary.totalOvertimeSvc > 45.0) items.push({ date: '-', message: `服務簿の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeSvc)}h (45h超過)` });
+                                     if (comparisonData.summary.totalOvertimeRep > 45.0) items.push({ date: '-', message: `日報の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeRep)}h (45h超過)` });
+                                 }
+
+                                 setNgDetailData({
+                                   title: '残業不一致・超過 (詳細)',
+                                   items: items,
                                    allItems: allNg,
                                    employeeName: currentEmployee.employeeName 
                                  });
                                }}
                              >
-                               残業: {comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) ? 'OK' : 'NG'}
+                               残業: {(comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded) ? 'OK' : 'NG'}
+                               {comparisonData.summary.isOvertimeLimitExceeded && <span className="block text-[9px] font-bold text-rose-600">45h超過</span>}
                              </div>
 
                              {/* 夜業入力 */}
