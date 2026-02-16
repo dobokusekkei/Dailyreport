@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.11.10)</title>
+  <title>勤怠・日報比較ツール (Ver.11.13.1)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -222,6 +222,7 @@
                       <li className="font-bold text-indigo-600">時間年休の時刻反映: 所定内の開始/終了時刻に合わせて取得した場合、表示される時間帯を短縮します。</li>
                       <li><strong>自己時間:</strong> 勤務時間・深夜時間・合計に含めません。</li>
                       <li className="font-bold text-indigo-600">週休出(残し･時間外不算入): 時間外ではなく所定内に加算します。</li>
+                      <li className="font-bold text-indigo-600">非番勤務: 勤務として扱い、所定内7.0h以外や残業ありの場合はNGとします。</li>
                     </ul>
                   </div>
                   <div>
@@ -1194,7 +1195,8 @@
               };
           } else {
               const isFullDayLeave = records.some(r => r.type === '年休' || r.type === '全日年休' || r.type === '有給休暇' || r.type === 'その他休');
-              const isCompensatoryDay = records.some(r => r.type.includes('振休') || r.type.includes('振替休日') || r.type.includes('非番'));
+              // 修正: 「非番勤務」は休日（休暇）として扱わない
+              const isCompensatoryDay = records.some(r => r.type.includes('振休') || r.type.includes('振替休日') || (r.type.includes('非番') && !r.type.includes('非番勤務')));
 
               const halfDayRecord = records.find(r => r.type && r.type.includes('半休'));
               const changeRecord = records.find(r => r.type === '所定時間変更');
@@ -1224,6 +1226,11 @@
               let weekHolidayStart = null;
               let weekHolidayEnd = null;
               
+              // 非番勤務の実時間記録用
+              let hibanKinmuStart = null;
+              let hibanKinmuEnd = null;
+              let hibanKinmuTime = 0;
+
               records.forEach(r => {
                   if (r.type.includes('自己時間')) {
                       if (r.type) types.push(r.type);
@@ -1249,6 +1256,20 @@
                               if (t < s) t += 24.0;
                           }
                           if (weekHolidayEnd === null || t > weekHolidayEnd) weekHolidayEnd = t;
+                      }
+                  } else if (r.type.includes('非番勤務')) { // 非番勤務の集計を追加
+                      hibanKinmuTime += parseSpecialTime(r.time);
+                      if (r.startTime) {
+                          const t = parseSpecialTime(r.startTime);
+                          if (hibanKinmuStart === null || t < hibanKinmuStart) hibanKinmuStart = t;
+                      }
+                      if (r.endTime) {
+                          let t = parseSpecialTime(r.endTime);
+                          if (r.startTime) {
+                              const s = parseSpecialTime(r.startTime);
+                              if (t < s) t += 24.0;
+                          }
+                          if (hibanKinmuEnd === null || t > hibanKinmuEnd) hibanKinmuEnd = t;
                       }
                   } else if (r.type.includes('時間外') || r.type.includes('休日')) {
                       overtime += parseSpecialTime(r.time);
@@ -1319,6 +1340,13 @@
                   // 週休出がある場合、時間を上書き
                   if (weekHolidayStart !== null) finalStartTime = formatTimeStr(weekHolidayStart);
                   if (weekHolidayEnd !== null) finalEndTime = formatTimeStr(weekHolidayEnd);
+              }
+              
+              // 非番勤務がある場合、時間を上書き
+              if (hibanKinmuTime > 0) {
+                  finalRegularTime = hibanKinmuTime;
+                  if (hibanKinmuStart !== null) finalStartTime = formatTimeStr(hibanKinmuStart);
+                  if (hibanKinmuEnd !== null) finalEndTime = formatTimeStr(hibanKinmuEnd);
               }
 
               if (hasNightWorkType) nightTime += 7.0;
@@ -1509,7 +1537,7 @@
                 nightWorkMessage = 'H列不整合';
                 hasMismatch = true;
             }
-            const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
+            const isHiban = base.types ? base.types.some(t => t.includes('非番') && !t.includes('非番勤務')) : (base.status && base.status.includes('非番') && !base.status.includes('非番勤務'));
             if (isHiban) {
                 warningMessage = warningMessage ? warningMessage + ' 非番NG' : '非番NG';
                 hasMismatch = true;
@@ -1521,6 +1549,21 @@
             }
             if (!isNightWorkF7 && hasH1) {
                  nightWorkMessage = 'H列不整合'; 
+                 hasMismatch = true;
+            }
+        }
+
+        // 非番勤務の特例チェック
+        const isHibanKinmu = base.types ? base.types.some(t => t.includes('非番勤務')) : (base.status && base.status.includes('非番勤務'));
+        if (isHibanKinmu) {
+            // 所定内7.0チェック
+            if (Math.abs((base.regularTime || 0) - 7.0) > 0.01) {
+                 warningMessage = warningMessage ? warningMessage + ' 非番勤務所定≠7' : '非番勤務所定≠7';
+                 hasMismatch = true;
+            }
+            // 時間外チェック
+            if ((base.overtime || 0) > 0.01) {
+                 warningMessage = warningMessage ? warningMessage + ' 非番勤務残業NG' : '非番勤務残業NG';
                  hasMismatch = true;
             }
         }
@@ -1640,8 +1683,8 @@
             
             const base = res.base;
             
-            // 修正箇所：服務簿の種別(types)に「夜業」が含まれている場合にカウント
-            const hasSvcNightWork = svc.types && svc.types.some(t => t.includes('夜業'));
+            // 修正箇所：服務簿の種別(types)またはステータス(status)に「夜業」が含まれている場合にカウント
+            const hasSvcNightWork = (svc.types && svc.types.some(t => t.includes('夜業'))) || (svc.status && svc.status.includes('夜業'));
             if (hasSvcNightWork) nightWorkCount++;
 
             const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
@@ -1764,7 +1807,7 @@
 
         const metaRows = [
             ["Property", "Value"],
-            ["ExportVersion", "11.9.1"],
+            ["ExportVersion", "11.13.1"],
             ["DirectorCount", employeeSummary.directorCount],
             ["ManagerCount", employeeSummary.managerCount],
             ["GeneralCount", employeeSummary.generalCount],
@@ -1884,11 +1927,17 @@
           
           let nightWorkDays = 0, hibanDays = 0, weekHolidayWorkCount = 0, compensatoryLeaveCount = 0;
           let saturdayHibanCount = 0, saturdayHibanMismatch = false;
+          let divergenceCount = 0; // 追加
+          
+          // 表示制御用フラグ
+          let hasOvertimeRecord = false;
+          let hasNightWorkRecord = false;
+          let hasCompensatoryRecord = false;
 
           results.forEach(r => {
               const base = r.check.base;
-              // 修正箇所：服務簿の種別(types)に「夜業」が含まれている場合にカウント
-              const hasSvcNightWork = r.svc.types && r.svc.types.some(t => t.includes('夜業'));
+              // 修正箇所：服務簿の種別(types)またはステータス(status)に「夜業」が含まれている場合にカウント
+              const hasSvcNightWork = (r.svc.types && r.svc.types.some(t => t.includes('夜業'))) || (r.svc.status && r.svc.status.includes('夜業'));
               if (hasSvcNightWork) nightWorkDays++;
 
               const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
@@ -1910,7 +1959,47 @@
                   }
                   if (!hasMondayTarget) saturdayHibanMismatch = true;
               }
+              // 乖離カウント
+              if (r.svc.hasDivergence) divergenceCount++;
+
+              // 1. 残業関連
+              if (
+                  r.sch.overtime > 0 || r.svc.overtime > 0 || r.rep.overtime > 0 ||
+                  (r.sch.status && r.sch.status.includes('残業')) ||
+                  (r.svc.status && r.svc.status.includes('残業')) ||
+                  (r.svc.types && r.svc.types.some(t => t.includes('残業'))) ||
+                  (r.rep.status && r.rep.status.includes('残業')) ||
+                  (r.sch.status && r.sch.status.includes('時間外')) ||
+                  (r.svc.status && r.svc.status.includes('時間外')) ||
+                  (r.svc.types && r.svc.types.some(t => t.includes('時間外'))) ||
+                  (r.rep.status && r.rep.status.includes('時間外'))
+              ) {
+                  hasOvertimeRecord = true;
+              }
+
+              // 2. 夜業・非番関連
+              if (
+                  r.sch.nightTime > 0 || r.svc.nightTime > 0 || r.rep.nightTime > 0 ||
+                  (r.sch.status && (r.sch.status.includes('夜業') || r.sch.status.includes('非番') || r.sch.status.includes('深夜'))) ||
+                  (r.svc.status && (r.svc.status.includes('夜業') || r.svc.status.includes('非番') || r.svc.status.includes('深夜'))) ||
+                  (r.svc.types && r.svc.types.some(t => t.includes('夜業') || t.includes('非番') || t.includes('深夜'))) ||
+                  (r.rep.status && (r.rep.status.includes('夜業') || r.rep.status.includes('非番') || r.rep.status.includes('深夜')))
+              ) {
+                  hasNightWorkRecord = true;
+              }
+
+              // 3. 振休関連
+              if (
+                  (r.sch.status && (r.sch.status.includes('振休') || r.sch.status.includes('振替休日'))) ||
+                  (r.svc.status && (r.svc.status.includes('振休') || r.svc.status.includes('振替休日'))) ||
+                  (r.svc.types && r.svc.types.some(t => t.includes('振休') || t.includes('振替休日'))) ||
+                  (r.rep.status && (r.rep.status.includes('振休') || r.rep.status.includes('振替休日')))
+              ) {
+                  hasCompensatoryRecord = true;
+              }
           });
+          
+          if (saturdayHibanCount > 0) hasCompensatoryRecord = true;
           
           let nightWorkMismatch = (!isManager && !isDirector && nightWorkDays !== hibanDays);
           let compensatoryLeaveMismatch = (saturdayHibanCount !== compensatoryLeaveCount); // 週休出ではなく土曜非番と比較
@@ -1919,13 +2008,36 @@
           rows.push([`対象年月: ${fileMeta.yearMonth || '不明'} (※自動検出)`]);
           rows.push(["【判定サマリー】"]);
           rows.push(["所定内一致", isRegOK ? "OK" : "NG"]);
-          rows.push(["残業一致", isOverOK ? "OK" : "NG"]);
-          rows.push(["夜業入力チェック", isNightInputOK ? "OK" : "NG"]);
-          rows.push(["夜業/非番回数突合", !nightWorkMismatch ? "OK" : "NG", `(夜${nightWorkDays}/非${hibanDays})`]);
-          rows.push(["振休取得突合", !compensatoryLeaveMismatch ? "OK" : "NG", `(土非番${saturdayHibanCount}/休${compensatoryLeaveCount})`]);
-          if(saturdayHibanCount > 0) {
-              rows.push(["土曜非番対応", !saturdayHibanMismatch ? "OK" : "NG"]);
+          
+          if (hasOvertimeRecord) {
+              rows.push(["残業一致", isOverOK ? "OK" : "NG"]);
+          } else {
+              rows.push(["残業一致", "-"]);
           }
+
+          if (hasNightWorkRecord) {
+              rows.push(["夜業入力チェック", isNightInputOK ? "OK" : "NG"]);
+              rows.push(["夜業/非番回数突合", !nightWorkMismatch ? "OK" : "NG", `(夜${nightWorkDays}/非${hibanDays})`]);
+          } else {
+              rows.push(["夜業入力チェック", "-"]);
+              rows.push(["夜業/非番回数突合", "-"]);
+          }
+
+          if (hasCompensatoryRecord) {
+              rows.push(["振休取得突合", !compensatoryLeaveMismatch ? "OK" : "NG", `(土非番${saturdayHibanCount}/休${compensatoryLeaveCount})`]);
+              if(saturdayHibanCount > 0) {
+                  rows.push(["土曜非番対応", !saturdayHibanMismatch ? "OK" : "NG"]);
+              }
+          } else {
+               rows.push(["振休取得突合", "-"]);
+          }
+
+          if(divergenceCount > 0) {
+              rows.push(["ログ乖離チェック", "NG", "(乖離有データあり)"]);
+          } else {
+              rows.push(["ログ乖離チェック", "OK"]);
+          }
+
           if(emp.warnings && emp.warnings.length > 0) {
               rows.push(["重要警告", emp.warnings.join(", ")]);
           }
@@ -2075,11 +2187,16 @@
         let saturdayHibanCount = 0;
         let saturdayHibanMismatch = false;
         let divergenceCount = 0; // 追加
+        
+        // 表示制御用フラグ
+        let hasOvertimeRecord = false;
+        let hasNightWorkRecord = false;
+        let hasCompensatoryRecord = false;
 
         result.forEach(r => {
-            const base = r.base;
-            // 修正箇所：服務簿の種別(types)に「夜業」が含まれている場合にカウント
-            const hasSvcNightWork = r.svc.types && r.svc.types.some(t => t.includes('夜業'));
+            const base = r.base; // Fixed in previous turn
+            // 修正箇所：服務簿の種別(types)またはステータス(status)に「夜業」が含まれている場合にカウント
+            const hasSvcNightWork = (r.svc.types && r.svc.types.some(t => t.includes('夜業'))) || (r.svc.status && r.svc.status.includes('夜業'));
             if (hasSvcNightWork) nightWorkDays++;
 
             const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
@@ -2087,6 +2204,7 @@
             if (base.types && base.types.some(t => t.includes('週休出') && t.includes('不算入'))) weekHolidayWorkCount++;
             if (base.types && base.types.some(t => t.includes('振休') || t.includes('振替休日'))) compensatoryLeaveCount++;
             else if (!base.types && base.status && (base.status.includes('振休') || base.status.includes('振替休日'))) compensatoryLeaveCount++;
+            
             const isSat = r.weekday.includes('土');
             const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
             if (isSat && isSvcHiban) {
@@ -2105,7 +2223,46 @@
             }
             // 乖離カウント
             if (r.svc.hasDivergence) divergenceCount++;
+
+            // 表示制御判定
+            // 1. 残業関連
+            if (
+                r.sch.overtime > 0 || r.svc.overtime > 0 || r.rep.overtime > 0 ||
+                (r.sch.status && r.sch.status.includes('残業')) ||
+                (r.svc.status && r.svc.status.includes('残業')) ||
+                (r.svc.types && r.svc.types.some(t => t.includes('残業'))) ||
+                (r.rep.status && r.rep.status.includes('残業')) ||
+                (r.sch.status && r.sch.status.includes('時間外')) ||
+                (r.svc.status && r.svc.status.includes('時間外')) ||
+                (r.svc.types && r.svc.types.some(t => t.includes('時間外'))) ||
+                (r.rep.status && r.rep.status.includes('時間外'))
+            ) {
+                hasOvertimeRecord = true;
+            }
+
+            // 2. 夜業・非番関連
+            if (
+                r.sch.nightTime > 0 || r.svc.nightTime > 0 || r.rep.nightTime > 0 ||
+                (r.sch.status && (r.sch.status.includes('夜業') || r.sch.status.includes('非番') || r.sch.status.includes('深夜'))) ||
+                (r.svc.status && (r.svc.status.includes('夜業') || r.svc.status.includes('非番') || r.svc.status.includes('深夜'))) ||
+                (r.svc.types && r.svc.types.some(t => t.includes('夜業') || t.includes('非番') || t.includes('深夜'))) ||
+                (r.rep.status && (r.rep.status.includes('夜業') || r.rep.status.includes('非番') || r.rep.status.includes('深夜')))
+            ) {
+                hasNightWorkRecord = true;
+            }
+
+            // 3. 振休関連 (振休、振替休日)
+            if (
+                (r.sch.status && (r.sch.status.includes('振休') || r.sch.status.includes('振替休日'))) ||
+                (r.svc.status && (r.svc.status.includes('振休') || r.svc.status.includes('振替休日'))) ||
+                (r.svc.types && r.svc.types.some(t => t.includes('振休') || t.includes('振替休日'))) ||
+                (r.rep.status && (r.rep.status.includes('振休') || r.rep.status.includes('振替休日')))
+            ) {
+                hasCompensatoryRecord = true;
+            }
         });
+        
+        if (saturdayHibanCount > 0) hasCompensatoryRecord = true;
         
         if (!isManager && !isDirector && nightWorkDays !== hibanDays) nightWorkMismatch = true;
         const compensatoryLeaveMismatch = (saturdayHibanCount !== compensatoryLeaveCount); // 週休出ではなく土曜非番と比較
@@ -2114,7 +2271,8 @@
             rows: result, 
             summary: { 
                 nightWorkDays, hibanDays, nightWorkMismatch, weekHolidayWorkCount, compensatoryLeaveCount, compensatoryLeaveMismatch, saturdayHibanCount, saturdayHibanMismatch,
-                isOvertimeLimitExceeded, totalOvertimeSch, totalOvertimeSvc, totalOvertimeRep, divergenceCount // 追加
+                isOvertimeLimitExceeded, totalOvertimeSch, totalOvertimeSvc, totalOvertimeRep, divergenceCount, // 追加
+                hasOvertimeRecord, hasNightWorkRecord, hasCompensatoryRecord // 追加
             }, 
             isManager, isDirector, isFlex 
         };
@@ -2198,9 +2356,7 @@
               allErrors.push({
                   category: '夜業/非番回数不一致',
                   items: [
-                      { date: '-', message: `夜業回数: ${d.summary.nightWorkDays}回` },
-                      { date: '-', message: `非番回数: ${d.summary.hibanDays}回` },
-                      { date: '参考', message: '管理職以外は回数が一致する必要があります' }
+                      { date: '-', message: `夜業(${d.summary.nightWorkDays}回)と非番(${d.summary.hibanDays}回)の回数が一致していません` }
                   ]
               });
           }
@@ -2245,7 +2401,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.10)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.13.1)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -2400,175 +2556,185 @@
                              </div>
 
                              {/* 残業 */}
-                             <div 
-                               className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
-                               onClick={() => {
-                                 if (comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded) return;
-                                 const allNg = collectAllNgItems();
-                                 if (allNg.length === 0) return;
-                                 
-                                 // このボタン用のアイテムのみ生成
-                                 const items = [];
-                                 
-                                 // 残業不一致
-                                 comparisonData.rows
-                                     .filter(d => comparisonData.isFlex ? d.sch.overtime > 0 : Math.abs(d.diffOvertime) > 0.01)
-                                     .forEach(d => items.push({
-                                       date: `${d.day}日(${d.weekday})`,
-                                       message: comparisonData.isFlex
-                                         ? `FLEX残業NG: ${formatSpecialTime(d.sch.overtime)}h`
-                                         : `差分: ${formatSpecialTime(d.diffOvertime)}h (勤務表:${formatSpecialTime(d.sch.overtime)} vs 日報:${formatSpecialTime(d.rep.overtime)})`
-                                     }));
-                                     
-                                 // 45時間超過
-                                 if (comparisonData.summary.isOvertimeLimitExceeded) {
-                                     if (comparisonData.summary.totalOvertimeSch > 45.0) items.push({ date: '-', message: `勤務表の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeSch)}h (45h超過)` });
-                                     if (comparisonData.summary.totalOvertimeSvc > 45.0) items.push({ date: '-', message: `服務簿の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeSvc)}h (45h超過)` });
-                                     if (comparisonData.summary.totalOvertimeRep > 45.0) items.push({ date: '-', message: `日報の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeRep)}h (45h超過)` });
-                                 }
+                             {comparisonData.summary.hasOvertimeRecord && (
+                               <div 
+                                 className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
+                                 onClick={() => {
+                                   if (comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded) return;
+                                   const allNg = collectAllNgItems();
+                                   if (allNg.length === 0) return;
+                                   
+                                   // このボタン用のアイテムのみ生成
+                                   const items = [];
+                                   
+                                   // 残業不一致
+                                   comparisonData.rows
+                                       .filter(d => comparisonData.isFlex ? d.sch.overtime > 0 : Math.abs(d.diffOvertime) > 0.01)
+                                       .forEach(d => items.push({
+                                         date: `${d.day}日(${d.weekday})`,
+                                         message: comparisonData.isFlex
+                                           ? `FLEX残業NG: ${formatSpecialTime(d.sch.overtime)}h`
+                                           : `差分: ${formatSpecialTime(d.diffOvertime)}h (勤務表:${formatSpecialTime(d.sch.overtime)} vs 日報:${formatSpecialTime(d.rep.overtime)})`
+                                       }));
+                                       
+                                   // 45時間超過
+                                   if (comparisonData.summary.isOvertimeLimitExceeded) {
+                                       if (comparisonData.summary.totalOvertimeSch > 45.0) items.push({ date: '-', message: `勤務表の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeSch)}h (45h超過)` });
+                                       if (comparisonData.summary.totalOvertimeSvc > 45.0) items.push({ date: '-', message: `服務簿の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeSvc)}h (45h超過)` });
+                                       if (comparisonData.summary.totalOvertimeRep > 45.0) items.push({ date: '-', message: `日報の残業合計: ${formatSpecialTime(comparisonData.summary.totalOvertimeRep)}h (45h超過)` });
+                                   }
 
-                                 setNgDetailData({
-                                   title: '残業不一致・超過 (詳細)',
-                                   items: items,
-                                   allItems: allNg,
-                                   employeeName: currentEmployee.employeeName 
-                                 });
-                               }}
-                             >
-                               残業: {(comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded) ? 'OK' : 'NG'}
-                               {comparisonData.summary.isOvertimeLimitExceeded && <span className="block text-[9px] font-bold text-rose-600">45h超過</span>}
-                             </div>
+                                   setNgDetailData({
+                                     title: '残業不一致・超過 (詳細)',
+                                     items: items,
+                                     allItems: allNg,
+                                     employeeName: currentEmployee.employeeName 
+                                   });
+                                 }}
+                               >
+                                 残業: {(comparisonData.rows.every(d => Math.abs(d.diffOvertime) < 0.01) && !comparisonData.summary.isOvertimeLimitExceeded) ? 'OK' : 'NG'}
+                                 {comparisonData.summary.isOvertimeLimitExceeded && <span className="block text-[9px] font-bold text-rose-600">45h超過</span>}
+                               </div>
+                             )}
 
                              {/* 夜業入力 */}
-                             <div 
-                               className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
-                               onClick={() => {
-                                 if (comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage)) return;
-                                 const allNg = collectAllNgItems();
-                                 if (allNg.length === 0) return;
-                                 setNgDetailData({
-                                   title: '夜業入力不備 (詳細)',
-                                   items: comparisonData.rows
-                                     .filter(d => Math.abs(d.diffNight) > 0.01 || d.nightWorkCheckNG || d.nightWorkMessage)
-                                     .map(d => ({
-                                       date: `${d.day}日(${d.weekday})`,
-                                       message: [
-                                         Math.abs(d.diffNight) > 0.01 ? `深夜時間差分: ${formatSpecialTime(d.diffNight)}h` : '',
-                                         d.nightWorkCheckNG ? '日報夜業チェックNG' : '',
-                                         d.nightWorkMessage
-                                       ].filter(Boolean).join(', ')
-                                     })),
-                                   allItems: allNg,
-                                   employeeName: currentEmployee.employeeName 
-                                 });
-                               }}
-                             >
-                               夜業入力: {comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'OK' : 'NG'}
-                             </div>
+                             {comparisonData.summary.hasNightWorkRecord && (
+                               <div 
+                                 className={`p-2 rounded font-bold text-center border ${comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
+                                 onClick={() => {
+                                   if (comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage)) return;
+                                   const allNg = collectAllNgItems();
+                                   if (allNg.length === 0) return;
+                                   setNgDetailData({
+                                     title: '夜業入力不備 (詳細)',
+                                     items: comparisonData.rows
+                                       .filter(d => Math.abs(d.diffNight) > 0.01 || d.nightWorkCheckNG || d.nightWorkMessage)
+                                       .map(d => ({
+                                         date: `${d.day}日(${d.weekday})`,
+                                         message: [
+                                           Math.abs(d.diffNight) > 0.01 ? `深夜時間差分: ${formatSpecialTime(d.diffNight)}h` : '',
+                                           d.nightWorkCheckNG ? '日報夜業チェックNG' : '',
+                                           d.nightWorkMessage
+                                         ].filter(Boolean).join(', ')
+                                       })),
+                                     allItems: allNg,
+                                     employeeName: currentEmployee.employeeName 
+                                   });
+                                 }}
+                               >
+                                 夜業入力: {comparisonData.rows.every(d => Math.abs(d.diffNight) < 0.01 && !d.nightWorkCheckNG && !d.nightWorkMessage) ? 'OK' : 'NG'}
+                               </div>
+                             )}
 
                              {/* 翌日非番 (管理職対応版) */}
-                             <div 
-                               className={`p-2 rounded font-bold text-center border ${
-                                 (comparisonData.isManager || comparisonData.isDirector)
-                                   ? (comparisonData.summary.hibanDays === 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer')
-                                   : (comparisonData.rows.every(d => d.nextDayCheckOK !== false) && !comparisonData.summary.saturdayHibanMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer')
-                               }`}
-                               onClick={() => {
-                                 if (
+                             {comparisonData.summary.hasNightWorkRecord && (
+                               <div 
+                                 className={`p-2 rounded font-bold text-center border ${
                                    (comparisonData.isManager || comparisonData.isDirector)
-                                     ? comparisonData.summary.hibanDays === 0
-                                     : (comparisonData.rows.every(d => d.nextDayCheckOK !== false) && !comparisonData.summary.saturdayHibanMismatch)
-                                 ) return;
+                                     ? (comparisonData.summary.hibanDays === 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer')
+                                     : (comparisonData.rows.every(d => d.nextDayCheckOK !== false) && !comparisonData.summary.saturdayHibanMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer')
+                                 }`}
+                                 onClick={() => {
+                                   if (
+                                     (comparisonData.isManager || comparisonData.isDirector)
+                                       ? comparisonData.summary.hibanDays === 0
+                                       : (comparisonData.rows.every(d => d.nextDayCheckOK !== false) && !comparisonData.summary.saturdayHibanMismatch)
+                                   ) return;
 
-                                 const allNg = collectAllNgItems();
-                                 if (allNg.length === 0) return;
-                                 
-                                 // 表示用のアイテム生成（既存ロジック）
-                                 let items = [];
-                                 if (comparisonData.isManager || comparisonData.isDirector) {
-                                    if (comparisonData.summary.hibanDays > 0) items = [{ date: '-', message: '管理職・取締役は非番を取得できません。' }];
-                                 } else {
-                                    comparisonData.rows.filter(d => d.nextDayCheckOK === false).forEach(d => {
-                                      // 翌日の日付を取得するための処理を追加
-                                      const nextDayRow = comparisonData.rows.find(row => row.day === d.day + 1);
-                                      const dateStr = nextDayRow ? `${nextDayRow.day}日(${nextDayRow.weekday})` : `${d.day + 1}日`;
-                                      items.push({ date: dateStr, message: '翌日が非番になっていません(夜業明け)' });
-                                    });
-                                    if (comparisonData.summary.saturdayHibanMismatch) {
-                                        comparisonData.rows.filter(d => d.isSaturdayHibanNG).forEach(d => items.push({ date: `${d.day}日(${d.weekday})`, message: '土曜非番に対する月曜振休がありません' }));
-                                    }
+                                   const allNg = collectAllNgItems();
+                                   if (allNg.length === 0) return;
+                                   
+                                   // 表示用のアイテム生成（既存ロジック）
+                                   let items = [];
+                                   if (comparisonData.isManager || comparisonData.isDirector) {
+                                      if (comparisonData.summary.hibanDays > 0) items = [{ date: '-', message: '管理職・取締役は非番を取得できません。' }];
+                                   } else {
+                                      comparisonData.rows.filter(d => d.nextDayCheckOK === false).forEach(d => {
+                                        // 翌日の日付を取得するための処理を追加
+                                        const nextDayRow = comparisonData.rows.find(row => row.day === d.day + 1);
+                                        const dateStr = nextDayRow ? `${nextDayRow.day}日(${nextDayRow.weekday})` : `${d.day + 1}日`;
+                                        items.push({ date: dateStr, message: '翌日が非番になっていません(夜業明け)' });
+                                      });
+                                      if (comparisonData.summary.saturdayHibanMismatch) {
+                                          comparisonData.rows.filter(d => d.isSaturdayHibanNG).forEach(d => items.push({ date: `${d.day}日(${d.weekday})`, message: '土曜非番に対する月曜振休がありません' }));
+                                      }
+                                   }
+
+                                   setNgDetailData({
+                                     title: '翌日非番/土曜非番対応 (詳細)',
+                                     items: items,
+                                     allItems: allNg,
+                                     employeeName: currentEmployee.employeeName 
+                                   });
+                                 }}
+                               >
+                                 翌日非番: {
+                                    (comparisonData.isManager || comparisonData.isDirector)
+                                      ? (comparisonData.summary.hibanDays === 0 ? 'OK' : 'NG')
+                                      : (comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'OK' : 'NG')
                                  }
-
-                                 setNgDetailData({
-                                   title: '翌日非番/土曜非番対応 (詳細)',
-                                   items: items,
-                                   allItems: allNg,
-                                   employeeName: currentEmployee.employeeName 
-                                 });
-                               }}
-                             >
-                               翌日非番: {
-                                  (comparisonData.isManager || comparisonData.isDirector)
-                                    ? (comparisonData.summary.hibanDays === 0 ? 'OK' : 'NG')
-                                    : (comparisonData.rows.every(d => d.nextDayCheckOK !== false) ? 'OK' : 'NG')
-                               }
-                               {(comparisonData.isManager || comparisonData.isDirector) && (
-                                   <span className={`block text-[9px] font-normal ${comparisonData.summary.hibanDays === 0 ? 'text-slate-400' : 'text-rose-600 font-bold'}`}>
-                                     {comparisonData.summary.hibanDays === 0 ? '非番登録なし' : '非番登録あり'}
+                                 {(comparisonData.isManager || comparisonData.isDirector) && (
+                                     <span className={`block text-[9px] font-normal ${comparisonData.summary.hibanDays === 0 ? 'text-slate-400' : 'text-rose-600 font-bold'}`}>
+                                       {comparisonData.summary.hibanDays === 0 ? '非番登録なし' : '非番登録あり'}
+                                     </span>
+                                 )}
+                                 {!(comparisonData.isManager || comparisonData.isDirector) && comparisonData.summary.saturdayHibanCount > 0 && (
+                                   <span className={`block text-[9px] font-normal ${!comparisonData.summary.saturdayHibanMismatch ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
+                                     土曜非番対応: {!comparisonData.summary.saturdayHibanMismatch ? 'OK' : 'NG'}
                                    </span>
-                               )}
-                               {!(comparisonData.isManager || comparisonData.isDirector) && comparisonData.summary.saturdayHibanCount > 0 && (
-                                 <span className={`block text-[9px] font-normal ${!comparisonData.summary.saturdayHibanMismatch ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
-                                   土曜非番対応: {!comparisonData.summary.saturdayHibanMismatch ? 'OK' : 'NG'}
-                                 </span>
-                               )}
-                             </div>
+                                 )}
+                               </div>
+                             )}
 
                              {/* 夜業突合 */}
-                             <div 
-                               className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.nightWorkMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
-                               onClick={() => {
-                                 if (!comparisonData.summary.nightWorkMismatch) return;
-                                 const allNg = collectAllNgItems();
-                                 if (allNg.length === 0) return;
-                                 setNgDetailData({
-                                   title: '夜業/非番回数不一致 (詳細)',
-                                   items: [
-                                     { date: '-', message: `夜業回数: ${comparisonData.summary.nightWorkDays}回` },
-                                     { date: '-', message: `非番回数: ${comparisonData.summary.hibanDays}回` },
-                                     { date: '参考', message: '管理職以外は回数が一致する必要があります' }
-                                   ],
-                                   allItems: allNg,
-                                   employeeName: currentEmployee.employeeName 
-                                 });
-                               }}
-                             >
-                               夜業突合: {!comparisonData.summary.nightWorkMismatch ? 'OK' : 'NG'} 
-                               <span className="block text-[9px] font-normal text-slate-500">(夜{comparisonData.summary.nightWorkDays}/非{comparisonData.summary.hibanDays})</span>
-                             </div>
+                             {comparisonData.summary.hasNightWorkRecord && (
+                               <div 
+                                 className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.nightWorkMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
+                                 onClick={() => {
+                                   if (!comparisonData.summary.nightWorkMismatch) return;
+                                   const allNg = collectAllNgItems();
+                                   if (allNg.length === 0) return;
+                                   setNgDetailData({
+                                     title: '夜業/非番回数不一致 (詳細)',
+                                     items: [
+                                       { date: '-', message: `夜業回数: ${comparisonData.summary.nightWorkDays}回` },
+                                       { date: '-', message: `非番回数: ${comparisonData.summary.hibanDays}回` },
+                                       { date: '参考', message: '管理職以外は回数が一致する必要があります' }
+                                     ],
+                                     allItems: allNg,
+                                     employeeName: currentEmployee.employeeName 
+                                   });
+                                 }}
+                               >
+                                 夜業突合: {!comparisonData.summary.nightWorkMismatch ? 'OK' : 'NG'} 
+                                 <span className="block text-[9px] font-normal text-slate-500">(夜{comparisonData.summary.nightWorkDays}/非{comparisonData.summary.hibanDays})</span>
+                               </div>
+                             )}
 
                              {/* 振休突合 */}
-                             <div 
-                               className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.compensatoryLeaveMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
-                               onClick={() => {
-                                 if (!comparisonData.summary.compensatoryLeaveMismatch) return;
-                                 const allNg = collectAllNgItems();
-                                 if (allNg.length === 0) return;
-                                 setNgDetailData({
-                                   title: '土曜非番/振休回数不一致 (詳細)',
-                                   items: [
-                                     { date: '-', message: `土曜非番(振休発生)回数: ${comparisonData.summary.saturdayHibanCount}回` },
-                                     { date: '-', message: `振休取得回数: ${comparisonData.summary.compensatoryLeaveCount}回` },
-                                     { date: '参考', message: '土曜非番の回数分、振休を取得する必要があります' }
-                                   ],
-                                   allItems: allNg,
-                                   employeeName: currentEmployee.employeeName 
-                                 });
-                               }}
-                             >
-                               振休突合: {!comparisonData.summary.compensatoryLeaveMismatch ? 'OK' : 'NG'}
-                               <span className="block text-[9px] font-normal text-slate-500">(土非番{comparisonData.summary.saturdayHibanCount}/休{comparisonData.summary.compensatoryLeaveCount})</span>
-                             </div>
+                             {comparisonData.summary.hasCompensatoryRecord && (
+                               <div 
+                                 className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.compensatoryLeaveMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
+                                 onClick={() => {
+                                   if (!comparisonData.summary.compensatoryLeaveMismatch) return;
+                                   const allNg = collectAllNgItems();
+                                   if (allNg.length === 0) return;
+                                   setNgDetailData({
+                                     title: '土曜非番/振休回数不一致 (詳細)',
+                                     items: [
+                                       { date: '-', message: `土曜非番(振休発生)回数: ${comparisonData.summary.saturdayHibanCount}回` },
+                                       { date: '-', message: `振休取得回数: ${comparisonData.summary.compensatoryLeaveCount}回` },
+                                       { date: '参考', message: '土曜非番の回数分、振休を取得する必要があります' }
+                                     ],
+                                     allItems: allNg,
+                                     employeeName: currentEmployee.employeeName 
+                                   });
+                                 }}
+                               >
+                                 振休突合: {!comparisonData.summary.compensatoryLeaveMismatch ? 'OK' : 'NG'}
+                                 <span className="block text-[9px] font-normal text-slate-500">(土非番{comparisonData.summary.saturdayHibanCount}/休{comparisonData.summary.compensatoryLeaveCount})</span>
+                               </div>
+                             )}
 
                              {/* ログ乖離 */}
                              <div 
@@ -2662,19 +2828,23 @@
                                   // --- 服務簿のステータス色判定 ---
                                   let svcStatus = svc.status || '';
                                   let svcStatusColor = 'bg-indigo-100 text-indigo-700';
+                                  let typesStr = '';
                                   if (svc.types && svc.types.length > 0) {
-                                      const typesStr = svc.types.join(', ');
+                                      typesStr = svc.types.join(', ');
                                       if (svcStatus) svcStatus += ` [${typesStr}]`;
                                       else svcStatus = typesStr;
-                                      
-                                      const hasPartial = typesStr.includes('時間年休') || typesStr.includes('半休');
-                                      const hasRest = typesStr.includes('年休') || typesStr.includes('全日年休') || typesStr.includes('有給') || typesStr.includes('非番') || typesStr.includes('振休') || typesStr.includes('振替休日') || typesStr.includes('その他休');
-                                      
-                                      if (hasPartial) {
-                                          svcStatusColor = 'bg-orange-100 text-orange-800';
-                                      } else if (hasRest) {
-                                          svcStatusColor = 'bg-rose-100 text-rose-800';
-                                      }
+                                  }
+
+                                  // ステータス色決定（非番勤務を優先）
+                                  const hasPartial = typesStr.includes('時間年休') || typesStr.includes('半休');
+                                  const hasRest = typesStr.includes('年休') || typesStr.includes('全日年休') || typesStr.includes('有給') || typesStr.includes('非番') || typesStr.includes('振休') || typesStr.includes('振替休日') || typesStr.includes('その他休');
+                                  
+                                  if (typesStr.includes('非番勤務')) {
+                                      svcStatusColor = 'bg-orange-200 text-orange-900'; // 薄茶色
+                                  } else if (hasPartial) {
+                                      svcStatusColor = 'bg-orange-100 text-orange-800';
+                                  } else if (hasRest) {
+                                      svcStatusColor = 'bg-rose-100 text-rose-800';
                                   }
 
                                   return (
