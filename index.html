@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.11.17.3)</title>
+  <title>勤怠・日報比較ツール (Ver.11.17.8)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -116,13 +116,19 @@
       return hours + (minutes / 60);
     };
 
-    const formatSpecialTime = (decimalHours) => {
+    const formatSpecialTime = (decimalHours, digits = 2) => {
       if (!decimalHours && decimalHours !== 0) return '-';
       const sign = decimalHours < 0 ? '-' : '';
       const absHours = Math.abs(decimalHours);
       const totalMinutes = Math.round(absHours * 60);
       const normH = Math.floor(totalMinutes / 60);
       const normM = totalMinutes % 60;
+      
+      // digits=1の場合は、60進法の分の1の位を切り捨てて10分単位にする簡易表示（160.0など）
+      if (digits === 1) {
+          const integerM = Math.floor(normM / 10);
+          return sign + normH + "." + integerM;
+      }
       return sign + (normH + (normM / 100)).toFixed(2);
     };
     
@@ -684,7 +690,10 @@
                    if (sheetName === "_Metadata") return;
                    const sheet = workbook.Sheets[sheetName];
                    const sheetRows = this.xlsx.utils.sheet_to_json(sheet, {header: 1});
-                   this.parseRestoredSheet(sheetRows, settings);
+                   const result = this.parseRestoredSheet(sheetRows, settings);
+                   if (result && result.yearMonth && !detectedYearMonth) {
+                       detectedYearMonth = result.yearMonth;
+                   }
                });
                
                continue;
@@ -771,15 +780,21 @@
       parseRestoredSheet(rows, settings) {
           let empName = "";
           let empId = "";
+          let yearMonth = null; 
+
           for(let i=0; i<15; i++) {
               if (rows[i] && rows[i].length > 0) {
                   const cell0 = String(rows[i][0] || "");
                   const cell1 = String(rows[i][1] || "");
                   if (cell0.startsWith("社員名:")) empName = cell0.substring(4).trim();
                   if (cell1.startsWith("ID:")) empId = cell1.substring(3).trim();
+                  if (cell0.startsWith("対象年月:")) {
+                      const match = cell0.match(/対象年月:\s*(\d+)/);
+                      if (match) yearMonth = match[1];
+                  }
               }
           }
-          if (!empName) return;
+          if (!empName) return null;
 
           const entry = this.getOrInitEntry(empName, empId, 'service', settings);
           
@@ -790,7 +805,7 @@
                   break;
               }
           }
-          if (headerRow === -1) return;
+          if (headerRow === -1) return { yearMonth };
 
           for(let i=headerRow+1; i<rows.length; i++) {
               const row = rows[i];
@@ -850,6 +865,8 @@
                   holidayWork: (repStatus.includes("休出")) ? 1 : 0 
               });
           }
+          
+          return { yearMonth };
       }
 
       parseServiceRecord(rows, settings) {
@@ -1846,7 +1863,7 @@
 
         const metaRows = [
             ["Property", "Value"],
-            ["ExportVersion", "11.17.3"],
+            ["ExportVersion", "11.17.8"],
             ["DirectorCount", employeeSummary.directorCount],
             ["ManagerCount", employeeSummary.managerCount],
             ["GeneralCount", employeeSummary.generalCount],
@@ -2275,6 +2292,11 @@
         let hasCompensatoryRecord = false;
         let hasLateNightWorkCandidate = false; // 深夜残業対象候補
 
+        // 休暇集計用の変数
+        let totalAnnualLeaveDays = 0;
+        let totalHalfPaidLeaveDays = 0;
+        let totalTimeAnnualLeave = 0;
+
         result.forEach(r => {
             const base = r.base;
             // 修正箇所：服務簿の種別(types)またはステータス(status)に「夜業」が含まれている場合にカウント
@@ -2328,12 +2350,6 @@
             ) {
                 hasNightWorkRecord = true;
             }
-            
-            // 深夜残業チェック対象（夜業以外かつ22時以降終了）があるか
-            const svcEndTimeVal = parseSpecialTime(r.svc.endTime);
-            if (!hasSvcNightWork && svcEndTimeVal >= 22.0) {
-                hasLateNightWorkCandidate = true;
-            }
 
             // 3. 振休関連
             if (
@@ -2344,6 +2360,15 @@
             ) {
                 hasCompensatoryRecord = true;
             }
+
+            // 休暇集計
+            const svcTypes = r.svc.types || [];
+            if (svcTypes.some(t => t === '年休' || t === '全日年休' || t === '有給休暇' || t === '有給')) {
+                totalAnnualLeaveDays += 1;
+            }
+            const halfLeaveCount = svcTypes.filter(t => t.includes('半休')).length;
+            totalHalfPaidLeaveDays += halfLeaveCount * 0.5;
+            totalTimeAnnualLeave += (r.svc.timeAnnualLeave || 0);
         });
         
         if (saturdayHibanCount > 0) hasCompensatoryRecord = true;
@@ -2359,6 +2384,7 @@
                 hasOvertimeRecord, hasNightWorkRecord, hasCompensatoryRecord, hasLateNightWorkCandidate, // 追加
                 totalRegularSvc, totalRegularRep, 
                 isRegularTotalMatch, isOvertimeTotalMatch, // 追加
+                totalAnnualLeaveDays, totalHalfPaidLeaveDays, totalTimeAnnualLeave // 休暇集計追加
             }, 
             isManager, isDirector, isFlex 
         };
@@ -2504,7 +2530,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.17.3)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.17.8)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -2865,55 +2891,82 @@
                              )}
 
                              {/* ログ乖離 */}
-                             <div 
-                               className={`p-2 rounded font-bold text-center border ${comparisonData.summary.divergenceCount === 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
-                               onClick={() => {
-                                 if (comparisonData.summary.divergenceCount === 0) return;
-                                 const allNg = collectAllNgItems();
-                                 if (allNg.length === 0) return;
-                                 setNgDetailData({
-                                    title: 'ログ乖離あり (詳細)',
-                                    items: comparisonData.rows
-                                      .filter(r => r.svc.hasDivergence)
-                                      .map(r => ({
-                                        date: `${r.day}日(${r.weekday})`,
-                                        message: '乖離有（申請要）'
-                                      })),
-                                    allItems: allNg,
-                                    employeeName: currentEmployee.employeeName
-                                 });
-                               }}
-                             >
-                               ログ乖離: {comparisonData.summary.divergenceCount === 0 ? 'OK' : 'NG'}
-                               {comparisonData.summary.divergenceCount > 0 && <span className="block text-[9px] font-bold text-rose-600">乖離あり</span>}
-                             </div>
+                             {comparisonData.summary.divergenceCount > 0 && (
+                               <div 
+                                 className="p-2 rounded font-bold text-center border bg-rose-50 text-rose-700 border-rose-100 cursor-pointer"
+                                 onClick={() => {
+                                   const allNg = collectAllNgItems();
+                                   if (allNg.length === 0) return;
+                                   setNgDetailData({
+                                      title: 'ログ乖離あり (詳細)',
+                                      items: comparisonData.rows
+                                        .filter(r => r.svc.hasDivergence)
+                                        .map(r => ({
+                                          date: `${r.day}日(${r.weekday})`,
+                                          message: '乖離有（申請要）'
+                                        })),
+                                      allItems: allNg,
+                                      employeeName: currentEmployee.employeeName
+                                   });
+                                 }}
+                               >
+                                 ログ乖離: NG
+                                 <span className="block text-[9px] font-bold text-rose-600">乖離あり</span>
+                               </div>
+                             )}
 
                            </div>
                         </div>
 
-                        <div className="shrink-0 grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        {/* 数値サマリー（休暇を追加） */}
+                        <div className="shrink-0 grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                           <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
                             <div className="text-xs font-black text-slate-400 uppercase mb-1">所定内</div>
                             <div className="flex justify-between items-end mb-1">
-                              <div><span className="text-[10px] text-slate-400 block">勤務表(計算)</span><span className="text-lg font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.regularTime || 0), 0))}</span></div>
-                              <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-lg font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.regularTime || 0), 0))}</span></div>
-                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-lg font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.regularTime || 0), 0))}</span></div>
+                              <div><span className="text-[10px] text-slate-400 block">勤務表</span><span className="text-base font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.regularTime || 0), 0), 1)}</span></div>
+                              <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-base font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.regularTime || 0), 0), 1)}</span></div>
+                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-base font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.regularTime || 0), 0), 1)}</span></div>
                             </div>
                           </div>
                           <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
                             <div className="text-xs font-black text-slate-400 uppercase mb-1">残業</div>
                             <div className="flex justify-between items-end mb-1">
-                              <div><span className="text-[10px] text-slate-400 block">勤務表</span><span className="text-lg font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.overtime || 0), 0))}</span></div>
-                              <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-lg font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.overtime || 0), 0))}</span></div>
-                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-lg font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.overtime || 0), 0))}</span></div>
+                              <div><span className="text-[10px] text-slate-400 block">勤務表</span><span className="text-base font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.overtime || 0), 0))}</span></div>
+                              <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-base font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.overtime || 0), 0))}</span></div>
+                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-base font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.overtime || 0), 0))}</span></div>
                             </div>
                           </div>
                           <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
                             <div className="text-xs font-black text-slate-400 uppercase mb-1">深夜</div>
                             <div className="flex justify-between items-end mb-1">
-                              <div><span className="text-[10px] text-slate-400 block">勤務表</span><span className="text-lg font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.nightTime || 0), 0))}</span></div>
-                              <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-lg font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.nightTime || 0), 0))}</span></div>
-                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-lg font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.nightTime || 0), 0))}</span></div>
+                              <div><span className="text-[10px] text-slate-400 block">勤務表</span><span className="text-base font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.nightTime || 0), 0))}</span></div>
+                              <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-base font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.nightTime || 0), 0))}</span></div>
+                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-base font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.nightTime || 0), 0))}</span></div>
+                            </div>
+                          </div>
+                          {/* 休暇 */}
+                          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                            <div className="text-xs font-black text-slate-400 uppercase mb-1">休暇</div>
+                            <div className="flex justify-between items-end mb-1">
+                               {(() => {
+                                  // 常に3項目を表示（0の場合も0d/0hと表示）
+                                  return (
+                                    <>
+                                      <div className="text-center">
+                                        <span className="text-[10px] text-slate-400 block">年休</span>
+                                        <span className="text-base font-mono font-bold text-slate-700">{comparisonData.summary.totalAnnualLeaveDays}d</span>
+                                      </div>
+                                      <div className="text-center">
+                                        <span className="text-[10px] text-slate-400 block">半休</span>
+                                        <span className="text-base font-mono font-bold text-slate-700">{comparisonData.summary.totalHalfPaidLeaveDays}d</span>
+                                      </div>
+                                      <div className="text-center">
+                                        <span className="text-[10px] text-slate-400 block">時間休</span>
+                                        <span className="text-base font-mono font-bold text-slate-700">{Math.floor(comparisonData.summary.totalTimeAnnualLeave)}h</span>
+                                      </div>
+                                    </>
+                                  );
+                               })()}
                             </div>
                           </div>
                         </div>
