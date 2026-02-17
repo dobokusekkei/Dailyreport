@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.11.17.17)</title>
+  <title>勤怠・日報比較ツール (Ver.11.17.21)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -88,6 +88,8 @@
     const FolderInput = (p) => <IconWrapper {...p}><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 2H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></IconWrapper>;
     const FileWarning = (p) => <IconWrapper {...p}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><path d="M12 18v-6" /><path d="M12 8h.01" /></IconWrapper>;
     const Copy = (p) => <IconWrapper {...p}><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></IconWrapper>;
+    const Plus = (p) => <IconWrapper {...p}><path d="M5 12h14" /><path d="M12 5v14" /></IconWrapper>;
+    const ArrowRightCircle = (p) => <IconWrapper {...p}><circle cx="12" cy="12" r="10" /><path d="m12 16 4-4-4-4" /><path d="M8 12h8" /></IconWrapper>;
 
     const useSheetJS = () => {
       const [xlsx, setXlsx] = useState(null);
@@ -131,7 +133,6 @@
       return sign + (normH + (normM / 100)).toFixed(2);
     };
     
-    // 時刻文字列 (H:MM) 生成
     const formatTimeStr = (decimalHours) => {
        if (!decimalHours && decimalHours !== 0) return '';
        let val = decimalHours;
@@ -150,7 +151,6 @@
 
     const normalizeName = (name) => {
       if (!name) return '';
-      // 全角・半角スペースを除去
       return String(name).replace(/[\s\u3000]+/g, '');
     };
 
@@ -336,11 +336,12 @@
     };
 
     // --- 設定モーダル ---
-    const SettingsModal = ({ isOpen, onClose, settings, onSave, onClear }) => {
+    const SettingsModal = ({ isOpen, onClose, settings, onSave, onClear, onExportNextMonth }) => {
       const [managersText, setManagersText] = useState('');
       const [directorsText, setDirectorsText] = useState('');
       const [flexText, setFlexText] = useState('');
       const [mappings, setMappings] = useState([]);
+      const [compBalances, setCompBalances] = useState([]);
       const fileInput = useRef(null);
 
       useEffect(() => {
@@ -349,6 +350,9 @@
           setDirectorsText(settings.directors ? settings.directors.join('\n') : '');
           setFlexText(settings.flexEmployees ? settings.flexEmployees.join('\n') : '');
           setMappings(settings.nameMappings);
+          // 振休残データのロード (Map形式から配列形式へ)
+          const balances = settings.compensatoryLeaveBalances || {};
+          setCompBalances(Object.entries(balances).map(([name, days]) => ({ name, days })));
         }
       }, [isOpen, settings]);
 
@@ -356,11 +360,21 @@
         const newManagers = managersText.split('\n').map(s => normalizeName(s)).filter(s => s);
         const newDirectors = directorsText.split('\n').map(s => normalizeName(s)).filter(s => s);
         const newFlex = flexText.split('\n').map(s => normalizeName(s)).filter(s => s);
+        
+        // 振休残データを配列からMap形式に戻す
+        const newBalances = {};
+        compBalances.forEach(b => {
+          if (b.name && !isNaN(parseFloat(b.days))) {
+            newBalances[normalizeName(b.name)] = parseFloat(b.days);
+          }
+        });
+
         onSave({
           managers: newManagers,
           directors: newDirectors,
           flexEmployees: newFlex,
-          nameMappings: mappings.filter(m => m.nippo && m.kintai)
+          nameMappings: mappings.filter(m => m.nippo && m.kintai),
+          compensatoryLeaveBalances: newBalances
         });
         onClose();
       };
@@ -380,12 +394,27 @@
       };
       const removeMapping = (idx) => setMappings(mappings.filter((_, i) => i !== idx));
 
+      // 振休残数管理用
+      const addBalance = () => setCompBalances([...compBalances, { name: '', days: 0 }]);
+      const updateBalance = (idx, field, val) => {
+        const newBalances = [...compBalances];
+        newBalances[idx][field] = val;
+        setCompBalances(newBalances);
+      };
+      const removeBalance = (idx) => setCompBalances(compBalances.filter((_, i) => i !== idx));
+
       const exportSettings = () => {
+        const balances = {};
+        compBalances.forEach(b => {
+             if (b.name) balances[normalizeName(b.name)] = parseFloat(b.days);
+        });
+
         const data = {
           managers: managersText.split('\n').map(s => s.trim()).filter(s => s),
           directors: directorsText.split('\n').map(s => s.trim()).filter(s => s),
           flexEmployees: flexText.split('\n').map(s => s.trim()).filter(s => s),
-          nameMappings: mappings
+          nameMappings: mappings,
+          compensatoryLeaveBalances: balances
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -407,6 +436,11 @@
             if (data.directors) setDirectorsText(data.directors.join('\n'));
             if (data.flexEmployees) setFlexText(data.flexEmployees.join('\n'));
             if (data.nameMappings) setMappings(data.nameMappings);
+            if (data.compensatoryLeaveBalances) {
+                setCompBalances(Object.entries(data.compensatoryLeaveBalances).map(([name, days]) => ({ name, days })));
+            } else {
+                setCompBalances([]);
+            }
           } catch (err) { alert('設定ファイルの読み込みに失敗しました。'); }
         };
         reader.readAsText(file);
@@ -441,9 +475,24 @@
                   <textarea value={flexText} onChange={e => setFlexText(e.target.value)} className="w-full h-32 p-3 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50" placeholder="氏名(1行1名)" />
                 </div>
               </div>
+              
+              <div>
+                <h3 className="font-bold text-sm text-slate-700 mb-2">振替休日・残数管理 (期首残)</h3>
+                <p className="text-xs text-slate-500 mb-2">前月からの繰越日数（未消化分）を設定します。<br/><span className="text-indigo-500">※解析済みの場合、社員名が自動補完されることはありませんが、下記「次月用設定保存」ボタンで自動計算・出力が可能です。</span></p>
+                <div className="space-y-2 max-h-40 overflow-y-auto border p-2 rounded-xl bg-slate-50">
+                    {compBalances.map((b, i) => (
+                        <div key={i} className="flex gap-2 items-center">
+                            <input value={b.name} onChange={e => updateBalance(i, 'name', e.target.value)} placeholder="氏名" className="flex-1 p-2 border rounded-lg text-sm bg-white" />
+                            <input type="number" step="0.5" value={b.days} onChange={e => updateBalance(i, 'days', e.target.value)} placeholder="残日数" className="w-20 p-2 border rounded-lg text-sm bg-white" />
+                            <button onClick={() => removeBalance(i)} className="text-rose-400 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                    ))}
+                    <button onClick={addBalance} className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline mt-2"><Plus className="w-3 h-3"/> 追加する</button>
+                </div>
+              </div>
+
               <div>
                 <h3 className="font-bold text-sm text-slate-700 mb-2">旧姓・別名マッピング</h3>
-                <p className="text-xs text-slate-500 mb-2">日報(旧姓) → 勤務表(新姓) に変換<br/><span className="text-rose-500">※設定適用後、すべてのデータが再計算されます。</span></p>
                 <div className="space-y-2">
                   {mappings.map((m, i) => (
                     <div key={i} className="flex gap-2 items-center">
@@ -458,7 +507,10 @@
               </div>
             </div>
             <div className="flex justify-between items-center p-4 border-t bg-slate-50">
-              <button onClick={handleClear} className="text-rose-500 text-sm font-bold hover:underline flex items-center gap-1"><Trash2 className="w-4 h-4"/> 設定を初期化</button>
+              <div className="flex gap-4 items-center">
+                  <button onClick={handleClear} className="text-rose-500 text-sm font-bold hover:underline flex items-center gap-1"><Trash2 className="w-4 h-4"/> 初期化</button>
+                  <button onClick={onExportNextMonth} className="text-indigo-600 text-sm font-bold hover:underline flex items-center gap-1 bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-100 hover:bg-indigo-100 transition-colors" title="現在の計算結果（期末残）を来月の期首残として保存します"><ArrowRightCircle className="w-4 h-4"/> 次月用設定保存(繰越)</button>
+              </div>
               <div className="flex gap-3">
                 <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-200 rounded-lg">キャンセル</button>
                 <button onClick={handleSave} className="px-6 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-lg shadow-indigo-200">設定を適用</button>
@@ -674,13 +726,15 @@
                const settingsJsonD = getVal("Settings_Directors"); // Added
                const settingsJsonF = getVal("Settings_Flex");
                const settingsJsonN = getVal("Settings_Mappings");
+               const settingsJsonC = getVal("Settings_CompensatoryBalances"); // 新規追加
                
-               if (settingsJsonM || settingsJsonD || settingsJsonF || settingsJsonN) {
+               if (settingsJsonM || settingsJsonD || settingsJsonF || settingsJsonN || settingsJsonC) {
                    restoredSettings = {
                        managers: settingsJsonM ? JSON.parse(settingsJsonM) : settings.managers,
                        directors: settingsJsonD ? JSON.parse(settingsJsonD) : settings.directors, // Added
                        flexEmployees: settingsJsonF ? JSON.parse(settingsJsonF) : settings.flexEmployees,
-                       nameMappings: settingsJsonN ? JSON.parse(settingsJsonN) : settings.nameMappings
+                       nameMappings: settingsJsonN ? JSON.parse(settingsJsonN) : settings.nameMappings,
+                       compensatoryLeaveBalances: settingsJsonC ? JSON.parse(settingsJsonC) : settings.compensatoryLeaveBalances
                    };
                    settings = restoredSettings;
                }
@@ -1395,8 +1449,8 @@
       const [showSettings, setShowSettings] = useState(false);
       const [showHelp, setShowHelp] = useState(false);
       const [checkMode, setCheckMode] = useState('full');
-      // settingsにdirectorsを追加
-      const [settings, setSettings] = useState({ managers: [], directors: [], flexEmployees: [], nameMappings: [] });
+      // settingsにcompensatoryLeaveBalancesを追加
+      const [settings, setSettings] = useState({ managers: [], directors: [], flexEmployees: [], nameMappings: [], compensatoryLeaveBalances: {} });
       const [mismatchListOpen, setMismatchListOpen] = useState(false);
       const [missingListOpen, setMissingListOpen] = useState(false); 
       const [ngDetailData, setNgDetailData] = useState(null);
@@ -1409,8 +1463,8 @@
         if (saved) {
             try {
                 const parsedSettings = JSON.parse(saved);
-                // directorsが無い古い設定データとの互換性維持
                 if (!parsedSettings.directors) parsedSettings.directors = [];
+                if (!parsedSettings.compensatoryLeaveBalances) parsedSettings.compensatoryLeaveBalances = {};
                 setSettings(parsedSettings);
             } catch (e) { console.error("設定の読み込みに失敗しました", e); }
         }
@@ -1511,10 +1565,81 @@
       };
 
       const handleClearSettings = () => {
-          const defaultSettings = { managers: [], directors: [], flexEmployees: [], nameMappings: [] };
+          const defaultSettings = { managers: [], directors: [], flexEmployees: [], nameMappings: [], compensatoryLeaveBalances: {} };
           setSettings(defaultSettings);
           localStorage.removeItem(STORAGE_KEY);
           setEmployees(prev => recalcEmployees(prev, defaultSettings));
+      };
+
+      // 振休情報計算関数
+      const calculateCompensatoryInfo = (emp, settings) => {
+          const normName = normalizeName(emp.employeeName);
+          const initialStock = settings.compensatoryLeaveBalances && settings.compensatoryLeaveBalances[normName] ? settings.compensatoryLeaveBalances[normName] : 0;
+          
+          let earned = 0;
+          let used = 0;
+
+          const serviceMap = {};
+          emp.serviceRecord.forEach(s => serviceMap[s.day] = s);
+          
+          // 全日リストアップ (1-31)
+          for (let day = 1; day <= 31; day++) {
+             const sch = emp.schedule.find(s => s.day === day) || {};
+             const svc = emp.serviceRecord.find(s => s.day === day) || {};
+             
+             // 発生: 服務簿優先、なければ勤務表
+             let isEarned = false;
+             if (svc.types && svc.types.some(t => t.includes('週休出') && t.includes('不算入'))) {
+                 isEarned = true;
+             } else if (!svc.status && sch.status && sch.status.includes('週休出') && sch.status.includes('不算入')) {
+                 // 勤務表のステータス文字列に依存（仮実装）
+                 isEarned = true;
+             }
+             if (isEarned) earned++;
+
+             // 消化: 振休 or 振替休日
+             // 服務簿
+             let isUsed = false;
+             if (svc.types && svc.types.some(t => t.includes('振休') || t.includes('振替休日'))) {
+                 isUsed = true;
+             } else if (svc.status && (svc.status.includes('振休') || svc.status.includes('振替休日'))) {
+                 isUsed = true;
+             } 
+             // 勤務表
+             if (!isUsed) {
+                 if (sch.status && (sch.status.includes('振休') || sch.status.includes('振替休日'))) {
+                     isUsed = true;
+                 }
+             }
+             if (isUsed) used++;
+          }
+
+          const finalStock = initialStock + earned - used;
+          const warningUnused = initialStock > 0 && used < initialStock;
+          const warningShortage = finalStock < 0;
+
+          return { initialStock, earned, used, finalStock, warningUnused, warningShortage };
+      };
+
+      const handleExportNextMonthSettings = () => {
+          const newBalances = {};
+          Object.values(employees).forEach(emp => {
+              const info = calculateCompensatoryInfo(emp, settings);
+              const normName = normalizeName(emp.employeeName);
+              newBalances[normName] = info.finalStock;
+          });
+
+          const nextSettings = {
+              ...settings,
+              compensatoryLeaveBalances: newBalances
+          };
+
+          const blob = new Blob([JSON.stringify(nextSettings, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'attendance_settings_next_month.json';
+          a.click();
       };
 
       const checkDailyMismatch = (sch, rep, svc, isManager, isFlex, nextDaySch, nextDaySvc) => {
@@ -1628,7 +1753,7 @@
         let lateNightOvertimeNG = false;
 
         // 夜業以外 かつ 終了時刻が22時以降
-        if (!isSvcNightWork && svcEndTimeVal >= 22.0) {
+        if (!isSvcNightWork && svcEndTimeVal > 22.0) {
             // 服務簿の深夜時間(N列相当) と 日報の深夜時間(F列相当) を比較
             // svc.nightTime vs rep.nightTime
             if (Math.abs((svc.nightTime || 0) - (rep.nightTime || 0)) > 0.01) {
@@ -1693,9 +1818,8 @@
         let hasError = false;
         let nightWorkCount = 0;
         let hibanCount = 0;
-        let weekHolidayWorkCount = 0;
         let compensatoryLeaveCount = 0;
-        let saturdayHibanCount = 0; // 追加
+        let saturdayHibanCount = 0;
         let saturdayHibanCheckNG = false;
         let lateNightOvertimeNG = false;
 
@@ -1709,7 +1833,6 @@
           const rep = emp.report.find(r => r.day === day) || {};
           const originalSvc = serviceMap[day] || {};
           
-          // --- 取締役用データ補完 & カレンダー継承（comparisonDataと同ロジック） ---
           let sch = { ...originalSch };
           let svc = { ...originalSvc };
           
@@ -1721,10 +1844,8 @@
               }
           }
 
-          // --- 服務簿データがない場合、勤務表から転記 ---
           const hasSvcData = svc.status || svc.startTime || svc.endTime || (svc.regularTime > 0) || (svc.overtime > 0) || (svc.nightTime > 0) || (svc.timeAnnualLeave > 0);
           if (!hasSvcData) {
-              // 勤務表に主要なデータがある場合のみコピー
               if (sch.status || sch.startTime || (sch.regularTime > 0)) {
                   svc.startTime = sch.startTime;
                   svc.endTime = sch.endTime;
@@ -1754,12 +1875,8 @@
                   sch.status = '日報参照';
               }
           }
-          // ------------------------------------------
 
           if (sch.status || rep.status || svc.status || sch.overtime > 0 || rep.overtime > 0 || svc.startTime || sch.regularTime > 0 || rep.regularTime > 0) {
-            // nextDaySch/Svcも本来は補完が必要だが、簡易的にオリジナルを使用する（大きな影響はないと仮定）
-            // ただし土曜非番チェックなどで翌日が重要になる場合はここも補完が必要になる
-            // 現状はオリジナルを使用
             const nextDaySch = scheduleMap[day+1];
             const nextDaySvc = serviceMap[day+1];
 
@@ -1769,15 +1886,11 @@
             
             const base = res.base;
             
-            // 修正箇所：服務簿の種別(types)またはステータス(status)に「夜業」が含まれている場合にカウント
             const hasSvcNightWork = (svc.types && svc.types.some(t => t.includes('夜業'))) || (svc.status && svc.status.includes('夜業'));
             if (hasSvcNightWork) nightWorkCount++;
 
             const isHiban = base.types ? base.types.some(t => t.includes('非番')) : (base.status && base.status.includes('非番'));
             if (isHiban) hibanCount++;
-            
-            // 週休出カウントは廃止し、土曜非番をカウントして比較対象にする
-            // if (base.types && base.types.some(t => t.includes('週休出') && t.includes('不算入'))) weekHolidayWorkCount++; // 廃止
             
             if (base.types && base.types.some(t => t.includes('振休') || t.includes('振替休日'))) compensatoryLeaveCount++;
             else if (!base.types && base.status && (base.status.includes('振休') || base.status.includes('振替休日'))) compensatoryLeaveCount++;
@@ -1787,7 +1900,7 @@
             const isSvcHiban = svc.types ? svc.types.some(t => t.includes('非番')) : (svc.status && svc.status.includes('非番'));
             
             if (isSat && isSvcHiban) {
-                saturdayHibanCount++; // 追加
+                saturdayHibanCount++;
                 const mondaySvc = serviceMap[day+2] || {};
                 const hasMondayTarget = (mondaySvc.types && mondaySvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
                                       || (!mondaySvc.types && mondaySvc.status && (mondaySvc.status.includes('振休') || mondaySvc.status.includes('振替休日')));
@@ -1799,10 +1912,12 @@
         if (!isManager) {
             if (nightWorkCount !== hibanCount) hasError = true;
         }
-        // 週休出との比較ではなく、土曜非番回数との比較に変更
-        if (saturdayHibanCount !== compensatoryLeaveCount) hasError = true;
         if (saturdayHibanCheckNG) hasError = true;
         
+        // 振休残チェック
+        const compInfo = calculateCompensatoryInfo(emp, settings);
+        if (compInfo.warningUnused || compInfo.warningShortage) hasError = true;
+
         return hasError;
       };
 
@@ -1816,7 +1931,6 @@
         let missingReportEmployees = []; 
         const limitDay = checkMode === 'day20' ? 20 : 31;
         
-        // カレンダーマスタ取得
         const masterSchedule = list.find(e => e.schedule.length > 0)?.schedule || [];
 
         list.forEach(emp => {
@@ -1850,7 +1964,6 @@
               generalCount++;
           }
           
-          // analyzeEmployeeMismatchにmasterScheduleとisDirectorを渡す
           if (analyzeEmployeeMismatch(emp, isManager || isDirector, isFlex, limitDay, masterSchedule, isDirector)) mismatchEmployees.push(emp);
 
           const hasService = emp.serviceRecord.length > 0;
@@ -1888,12 +2001,11 @@
         const wb = xlsx.utils.book_new();
         const limitDay = checkMode === 'day20' ? 20 : 31;
         
-        // --- カレンダーマスタの取得 (Export用に追加) ---
         const masterSchedule = Object.values(employees).find(e => e.schedule.length > 0)?.schedule || [];
 
         const metaRows = [
             ["Property", "Value"],
-            ["ExportVersion", "11.17.17"],
+            ["ExportVersion", "11.17.21"],
             ["DirectorCount", employeeSummary.directorCount],
             ["ManagerCount", employeeSummary.managerCount],
             ["GeneralCount", employeeSummary.generalCount],
@@ -1903,6 +2015,7 @@
             ["Settings_Directors", JSON.stringify(settings.directors)], 
             ["Settings_Flex", JSON.stringify(settings.flexEmployees)],
             ["Settings_Mappings", JSON.stringify(settings.nameMappings)],
+            ["Settings_CompensatoryBalances", JSON.stringify(settings.compensatoryLeaveBalances)],
             ["Mismatch_List", employeeSummary.mismatchEmployees.map(e=>e.employeeName).join(", ")],
             ["MissingReport_List", employeeSummary.missingReportEmployees.map(e=>e.employeeName).join(", ")]
         ];
@@ -1944,7 +2057,6 @@
              const nextDaySch = scheduleMap[day+1] || null;
              const nextDaySvc = serviceMap[day+1] || null;
              
-             // --- データ補完ロジック (comparisonDataと同様) ---
              let derivedSch = { ...sch };
              let derivedSvc = { ...svc };
             
@@ -1956,10 +2068,8 @@
                  }
              }
 
-             // --- 服務簿データがない場合、勤務表から転記 ---
              const hasSvcData = svc.status || svc.startTime || svc.endTime || (svc.regularTime > 0) || (svc.overtime > 0) || (svc.nightTime > 0) || (svc.timeAnnualLeave > 0);
              if (!hasSvcData) {
-                 // 勤務表に主要なデータがある場合のみコピー
                  if (derivedSch.status || derivedSch.startTime || (derivedSch.regularTime > 0)) {
                      derivedSvc.startTime = derivedSch.startTime;
                      derivedSvc.endTime = derivedSch.endTime;
@@ -2009,11 +2119,8 @@
              if (rep.nightWorkVal) repStatusStr += ` (夜業${rep.nightWorkVal})`;
 
              results.push({
-                 day, weekday: derivedSch.weekday || '', // 補完後の曜日を使用
-                 sch: derivedSch, // 補完後の勤務表データ
-                 rep, 
-                 svc: derivedSvc, // 補完後の服務簿データ
-                 check,
+                 day, weekday: derivedSch.weekday || '', 
+                 sch: derivedSch, rep, svc: derivedSvc, check,
                  schStatusStr, svcStatusStr, repStatusStr
              });
           }
@@ -2024,23 +2131,20 @@
           
           let nightWorkDays = 0, hibanDays = 0, weekHolidayWorkCount = 0, compensatoryLeaveCount = 0;
           let saturdayHibanCount = 0, saturdayHibanMismatch = false;
-          let divergenceCount = 0; // 追加
+          let divergenceCount = 0;
           
-          // 表示制御用フラグ
           let hasOvertimeRecord = false;
           let hasNightWorkRecord = false;
           let hasCompensatoryRecord = false;
-          let hasLateNightWorkCandidate = false; // 深夜残業対象候補
-          let hasHalfDayLeave = false; // 半休有無 (Ver.11.17.9)
+          let hasLateNightWorkCandidate = false;
+          let hasHalfDayLeave = false;
 
-          // 休暇集計用の変数
           let totalAnnualLeaveDays = 0;
           let totalHalfPaidLeaveDays = 0;
           let totalTimeAnnualLeave = 0;
 
           results.forEach(r => {
               const base = r.check.base;
-              // 修正箇所：服務簿の種別(types)またはステータス(status)に「夜業」が含まれている場合にカウント
               const hasSvcNightWork = (r.svc.types && r.svc.types.some(t => t.includes('夜業'))) || (r.svc.status && r.svc.status.includes('夜業'));
               if (hasSvcNightWork) nightWorkDays++;
 
@@ -2054,7 +2158,7 @@
               const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
               if (isSat && isSvcHiban) {
                   saturdayHibanCount++;
-                  const mondayRow = results.find(rr => rr.day === r.day + 2); // 修正箇所: result -> results
+                  const mondayRow = results.find(rr => rr.day === r.day + 2); 
                   let hasMondayTarget = false;
                   if (mondayRow) {
                       const mSvc = mondayRow.svc;
@@ -2063,10 +2167,8 @@
                   }
                   if (!hasMondayTarget) saturdayHibanMismatch = true;
               }
-              // 乖離カウント
               if (r.svc.hasDivergence) divergenceCount++;
 
-              // 1. 残業関連
               if (
                   r.sch.overtime > 0 || r.svc.overtime > 0 || r.rep.overtime > 0 ||
                   (r.sch.status && r.sch.status.includes('残業')) ||
@@ -2081,26 +2183,22 @@
                   hasOvertimeRecord = true;
               }
 
-              // 2. 夜業・非番関連
-              // 修正 (Ver.11.17.10で修正した箇所)
               if (
                   (r.sch.status && (r.sch.status.includes('夜業') || r.sch.status.includes('非番'))) ||
                   (r.svc.status && (r.svc.status.includes('夜業') || r.svc.status.includes('非番'))) ||
                   (r.svc.types && r.svc.types.some(t => t.includes('夜業') || t.includes('非番'))) ||
                   (r.rep.status && (r.rep.status.includes('夜業') || r.rep.status.includes('非番'))) ||
                   (r.rep.nightWorkVal && parseFloat(r.rep.nightWorkVal) > 0) || 
-                  r.check.isNightWorkDay // 日報深夜時間が7.0hの場合
+                  r.check.isNightWorkDay 
               ) {
                   hasNightWorkRecord = true;
               }
               
-              // 深夜残業チェック対象（夜業以外かつ22時以降終了）があるか
               const svcEndTimeVal = parseSpecialTime(r.svc.endTime);
-              if (!hasSvcNightWork && svcEndTimeVal >= 22.0) {
+              if (!hasSvcNightWork && svcEndTimeVal > 22.0) {
                   hasLateNightWorkCandidate = true;
               }
 
-              // 3. 振休関連
               if (
                   (r.sch.status && (r.sch.status.includes('振休') || r.sch.status.includes('振替休日'))) ||
                   (r.svc.status && (r.svc.status.includes('振休') || r.svc.status.includes('振替休日'))) ||
@@ -2110,7 +2208,6 @@
                   hasCompensatoryRecord = true;
               }
 
-              // 休暇集計
               const svcTypes = r.svc.types || [];
               if (svcTypes.some(t => t === '年休' || t === '全日年休' || t === '有給休暇' || t === '有給')) {
                   totalAnnualLeaveDays += 1;
@@ -2125,10 +2222,12 @@
           if (saturdayHibanCount > 0) hasCompensatoryRecord = true;
           
           let nightWorkMismatch = false;
-          if (!isManager && !isDirector && nightWorkDays !== hibanDays) nightWorkMismatch = true; // 修正
-          const compensatoryLeaveMismatch = (saturdayHibanCount !== compensatoryLeaveCount); // 週休出ではなく土曜非番と比較
+          if (!isManager && !isDirector && nightWorkDays !== hibanDays) nightWorkMismatch = true;
+          const compensatoryLeaveMismatch = (saturdayHibanCount !== compensatoryLeaveCount);
+
+          // 振休残情報の計算と出力
+          const compInfo = calculateCompensatoryInfo(emp, settings);
           
-          // ヘッダー情報の追加
           rows.push([`社員名: ${emp.employeeName}`, `ID: ${emp.employeeId}`]);
           rows.push([`対象年月: ${fileMeta.yearMonth || '不明'} (※自動検出)`]);
           rows.push(["【判定サマリー】"]);
@@ -2148,13 +2247,14 @@
               rows.push(["夜業/非番回数突合", "-"]);
           }
 
-          if (hasCompensatoryRecord) {
-              rows.push(["振休取得突合", !compensatoryLeaveMismatch ? "OK" : "NG", `(土非番${saturdayHibanCount}/休${compensatoryLeaveCount})`]);
-              if(saturdayHibanCount > 0) {
-                  rows.push(["土曜非番対応", !saturdayHibanMismatch ? "OK" : "NG"]);
-              }
+          // 振休残数管理の出力条件を変更
+          if (compInfo.initialStock !== 0 || compInfo.earned !== 0 || compInfo.used !== 0 || compInfo.finalStock !== 0) {
+             rows.push(["振休残数管理", 
+               `期首:${compInfo.initialStock} + 発生:${compInfo.earned} - 消化:${compInfo.used} = 期末:${compInfo.finalStock}`,
+               compInfo.warningUnused ? "【警告】未消化あり" : (compInfo.warningShortage ? "【警告】残数不足" : "OK")
+             ]);
           } else {
-               rows.push(["振休取得突合", "-"]);
+             rows.push(["振休残数管理", "-"]);
           }
 
           if(divergenceCount > 0) {
@@ -2315,7 +2415,6 @@
           }).filter(d => d.hasData);
         
         // --- 残業時間合計計算と45時間超過判定 ---
-        // 修正: 服務簿と日報の合計を計算
         const totalRegularSvc = result.reduce((acc, r) => acc + (r.svc.regularTime || 0), 0);
         const totalRegularRep = result.reduce((acc, r) => acc + (r.rep.regularTime || 0), 0);
         const totalOvertimeSvc = result.reduce((acc, r) => acc + (r.svc.overtime || 0), 0);
@@ -2411,7 +2510,7 @@
             
             // 深夜残業チェック対象（夜業以外かつ22時以降終了）があるか
             const svcEndTimeVal = parseSpecialTime(r.svc.endTime);
-            if (!hasSvcNightWork && svcEndTimeVal >= 22.0) {
+            if (!hasSvcNightWork && svcEndTimeVal > 22.0) {
                 hasLateNightWorkCandidate = true;
             }
 
@@ -2439,8 +2538,12 @@
         
         if (saturdayHibanCount > 0) hasCompensatoryRecord = true;
         
+        nightWorkMismatch = false;
         if (!isManager && !isDirector && nightWorkDays !== hibanDays) nightWorkMismatch = true;
         const compensatoryLeaveMismatch = (saturdayHibanCount !== compensatoryLeaveCount); // 週休出ではなく土曜非番と比較
+        
+        // 振休残計算
+        const compInfo = calculateCompensatoryInfo(currentEmployee, settings);
 
         return { 
             rows: result, 
@@ -2451,7 +2554,8 @@
                 totalRegularSvc, totalRegularRep, 
                 isRegularTotalMatch, isOvertimeTotalMatch, // 追加
                 totalAnnualLeaveDays, totalHalfPaidLeaveDays, totalTimeAnnualLeave, // 休暇集計追加
-                hasHalfDayLeave // 半休チェック表示用
+                hasHalfDayLeave, // 半休チェック表示用
+                compInfo // 振休残情報
             }, 
             isManager, isDirector, isFlex 
         };
@@ -2543,16 +2647,7 @@
           }
 
           // 7. 振休突合
-          if (d.summary.compensatoryLeaveMismatch) {
-              allErrors.push({
-                  category: '土曜非番/振休回数不一致',
-                  items: [
-                      { date: '-', message: `土曜非番(振休発生)回数: ${d.summary.saturdayHibanCount}回` },
-                      { date: '-', message: `振休取得回数: ${d.summary.compensatoryLeaveCount}回` },
-                      { date: '参考', message: '土曜非番の回数分、振休を取得する必要があります' }
-                  ]
-              });
-          }
+          // if (d.summary.compensatoryLeaveMismatch) { ... } // 削除（振休突合チェックは不要）
           
           // 8. 深夜残業 (新規追加)
           const lateNightErrors = d.rows.filter(r => r.lateNightOvertimeNG);
@@ -2597,6 +2692,14 @@
                   items: currentEmployee.warnings.map(w => ({ date: '-', message: w }))
               });
           }
+          
+          // 12. 振休残数警告
+          if (d.summary.compInfo.warningUnused) {
+              allErrors.push({ category: '振休残数', items: [{ date: '-', message: '前月残が未消化です' }] });
+          }
+          if (d.summary.compInfo.warningShortage) {
+              allErrors.push({ category: '振休残数', items: [{ date: '-', message: '振休残数が不足しています' }] });
+          }
 
           return allErrors;
       };
@@ -2609,7 +2712,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.17.17)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.17.21)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -2630,6 +2733,7 @@
           <main className="flex-1 w-full max-w-7xl mx-auto overflow-hidden flex flex-col min-h-0">
             {view === 'input' ? (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto h-full content-start">
+                {/* ... (File upload UI remains same) ... */}
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
                     <div className="flex items-center gap-2 mb-4"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><FileSpreadsheet className="w-5 h-5" /></div><h2 className="font-bold">ファイルアップロード</h2></div>
@@ -2857,15 +2961,15 @@
                                    if (comparisonData.isManager || comparisonData.isDirector) {
                                       if (comparisonData.summary.hibanDays > 0) items = [{ date: '-', message: '管理職・取締役は非番を取得できません。' }];
                                    } else {
-                                      comparisonData.rows.filter(d => d.nextDayCheckOK === false).forEach(d => {
-                                        // 翌日の日付を取得するための処理を追加
-                                        const nextDayRow = comparisonData.rows.find(row => row.day === d.day + 1);
-                                        const dateStr = nextDayRow ? `${nextDayRow.day}日(${nextDayRow.weekday})` : `${d.day + 1}日`;
-                                        items.push({ date: dateStr, message: '翌日が非番になっていません(夜業明け)' });
-                                      });
-                                      if (comparisonData.summary.saturdayHibanMismatch) {
-                                          comparisonData.rows.filter(d => d.isSaturdayHibanNG).forEach(d => items.push({ date: `${d.day}日(${d.weekday})`, message: '土曜非番に対する月曜振休がありません' }));
-                                      }
+                                       comparisonData.rows.filter(d => d.nextDayCheckOK === false).forEach(d => {
+                                         // 翌日の日付を取得するための処理を追加
+                                         const nextDayRow = comparisonData.rows.find(row => row.day === d.day + 1);
+                                         const dateStr = nextDayRow ? `${nextDayRow.day}日(${nextDayRow.weekday})` : `${d.day + 1}日`;
+                                         items.push({ date: dateStr, message: '翌日が非番になっていません(夜業明け)' });
+                                       });
+                                       if (comparisonData.summary.saturdayHibanMismatch) {
+                                           comparisonData.rows.filter(d => d.isSaturdayHibanNG).forEach(d => items.push({ date: `${d.day}日(${d.weekday})`, message: '土曜非番に対する月曜振休がありません' }));
+                                       }
                                    }
 
                                    setNgDetailData({
@@ -2919,28 +3023,35 @@
                                </div>
                              )}
 
-                             {/* 振休突合 */}
-                             {comparisonData.summary.hasCompensatoryRecord && (
+                             {/* 振休残数管理 (突合の代わり) */}
+                             {(comparisonData.summary.compInfo.initialStock !== 0 || comparisonData.summary.compInfo.earned !== 0 || comparisonData.summary.compInfo.used !== 0 || comparisonData.summary.compInfo.finalStock !== 0) && (
                                <div 
-                                 className={`p-2 rounded font-bold text-center border ${!comparisonData.summary.compensatoryLeaveMismatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
+                                 className={`p-2 rounded font-bold text-center border ${comparisonData.summary.compInfo.warningUnused || comparisonData.summary.compInfo.warningShortage ? 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}
                                  onClick={() => {
-                                   if (!comparisonData.summary.compensatoryLeaveMismatch) return;
                                    const allNg = collectAllNgItems();
                                    if (allNg.length === 0) return;
+                                   // ここでは振休残数に関するエラーだけをピックアップして表示してもよいが、全体を見せる形にする
                                    setNgDetailData({
-                                     title: '土曜非番/振休回数不一致 (詳細)',
+                                     title: '振休残数詳細',
                                      items: [
-                                       { date: '-', message: `土曜非番(振休発生)回数: ${comparisonData.summary.saturdayHibanCount}回` },
-                                       { date: '-', message: `振休取得回数: ${comparisonData.summary.compensatoryLeaveCount}回` },
-                                       { date: '参考', message: '土曜非番の回数分、振休を取得する必要があります' }
+                                          { date: '期首残', message: `${comparisonData.summary.compInfo.initialStock}日` },
+                                          { date: '発生', message: `${comparisonData.summary.compInfo.earned}日 (週休出・不算入)` },
+                                          { date: '消化', message: `${comparisonData.summary.compInfo.used}日 (振休・振替休日)` },
+                                          { date: '期末残', message: `${comparisonData.summary.compInfo.finalStock}日` },
+                                          ...(comparisonData.summary.compInfo.warningUnused ? [{ date: '警告', message: '前月残が未消化です' }] : []),
+                                          ...(comparisonData.summary.compInfo.warningShortage ? [{ date: '警告', message: '残数が不足しています' }] : [])
                                      ],
                                      allItems: allNg,
                                      employeeName: currentEmployee.employeeName 
                                    });
                                  }}
                                >
-                                 振休突合: {!comparisonData.summary.compensatoryLeaveMismatch ? 'OK' : 'NG'}
-                                 <span className="block text-[9px] font-normal text-slate-500">(土非番{comparisonData.summary.saturdayHibanCount}/休{comparisonData.summary.compensatoryLeaveCount})</span>
+                                 振休残数: {comparisonData.summary.compInfo.finalStock}日
+                                 <span className="block text-[9px] font-normal text-slate-500">
+                                     (期首{comparisonData.summary.compInfo.initialStock}+発{comparisonData.summary.compInfo.earned}-消{comparisonData.summary.compInfo.used})
+                                     {comparisonData.summary.compInfo.warningUnused && <span className="text-rose-600 block font-bold">未消化あり</span>}
+                                     {comparisonData.summary.compInfo.warningShortage && <span className="text-rose-600 block font-bold">残数不足</span>}
+                                 </span>
                                </div>
                              )}
 
@@ -2957,8 +3068,8 @@
                                       items: comparisonData.rows
                                         .filter(r => r.lateNightOvertimeNG)
                                         .map(r => ({
-                                           date: `${r.day}日(${r.weekday})`,
-                                           message: `深夜時間不一致 (服務簿:${formatSpecialTime(r.svc.nightTime)}h vs 日報:${formatSpecialTime(r.rep.nightTime)}h) ※夜業以外で22時以降終了`
+                                          date: `${r.day}日(${r.weekday})`,
+                                          message: `深夜時間不一致 (服務簿:${formatSpecialTime(r.svc.nightTime)}h vs 日報:${formatSpecialTime(r.rep.nightTime)}h) ※夜業以外で22時以降終了`
                                         })),
                                       allItems: allNg,
                                       employeeName: currentEmployee.employeeName
@@ -3046,7 +3157,7 @@
                             <div className="flex justify-between items-end mb-1">
                               <div><span className="text-[10px] text-slate-400 block">勤務表</span><span className="text-base font-mono font-bold text-slate-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.sch.nightTime || 0), 0))}</span></div>
                               <div className="text-center"><span className="text-[10px] text-slate-400 block">服務簿</span><span className="text-base font-mono font-bold text-indigo-700">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.svc.nightTime || 0), 0))}</span></div>
-                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-base font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.nightTime || 0), 0))}</span></div>
+                              <div className="text-right"><span className="text-[10px] text-slate-400 block">日報</span><span className="text-base font-mono font-bold text-blue-600">{formatSpecialTime(comparisonData.rows.reduce((acc, d) => acc + (d.rep.nightTime || 0), 0), 1)}</span></div>
                             </div>
                           </div>
                           <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
@@ -3089,7 +3200,7 @@
                                   return (
                                     <tr key={day} className={`hover:opacity-80 transition-colors ${rowColor} ${warningMessage ? 'bg-amber-50' : ''}`}>
                                       <td className="px-2 py-2 font-mono font-bold text-slate-500 text-center text-xl">{day} <span className="text-sm ml-1">{weekday}</span></td>
-                                      <td className="px-2 py-2 border-l bg-slate-50/30"><div className="flex flex-col gap-0.5"><span className="row-h text-xs font-bold text-slate-400 uppercase">ステータス</span><span className="row-h text-xs font-bold text-slate-400 uppercase">時間帯</span><span className="row-h text-xs font-bold text-slate-400 uppercase">所定内</span><span className="row-h text-xs font-bold text-slate-400 uppercase">時間外</span><span className="row-h text-xs font-bold text-slate-400 uppercase">深夜</span><span className="row-h text-xs font-bold text-slate-400 uppercase">時間年休</span></div></td>
+                                      <td className="px-2 py-2 border-l bg-slate-100/50"><div className="flex flex-col gap-0.5"><span className="row-h text-xs font-bold text-slate-400 uppercase">ステータス</span><span className="row-h text-xs font-bold text-slate-400 uppercase">時間帯</span><span className="row-h text-xs font-bold text-slate-400 uppercase">所定内</span><span className="row-h text-xs font-bold text-slate-400 uppercase">時間外</span><span className="row-h text-xs font-bold text-slate-400 uppercase">深夜</span><span className="row-h text-xs font-bold text-slate-400 uppercase">時間年休</span></div></td>
                                       <td className="px-2 py-2 border-l"><div className="flex flex-col gap-0.5"><div className="row-h flex gap-1">{sch.status && <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${schStatusColor}`}>{sch.status}</span>}{sch.special?.includes('夜業') && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-yellow-900 text-white">夜業</span>}</div><div className="row-h font-mono text-slate-600">{sch.startTime ? `${sch.startTime}-${sch.endTime}` : '-'}</div><div className="row-h font-mono font-bold text-slate-700">{formatSpecialTime(sch.regularTime)}</div><div className="row-h font-mono font-bold text-slate-700">{formatSpecialTime(sch.overtime)}</div><div className="row-h font-mono text-slate-400">{formatSpecialTime(sch.nightTime)}</div><div className="row-h font-mono text-slate-400 text-xs">{sch.timeAnnualLeave > 0 ? formatSpecialTime(sch.timeAnnualLeave) : '-'}</div></div></td>
                                       <td className="px-2 py-2 border-l bg-indigo-50/10"><div className="flex flex-col gap-0.5"><div className="row-h flex gap-1 overflow-hidden" title={svcStatus}>{svcStatus && <span className={`text-[10px] px-2 py-0.5 rounded font-bold truncate max-w-full ${svcStatusColor}`}>{svcStatus}</span>}</div><div className="row-h font-mono text-slate-600">{svc.startTime ? `${svc.startTime}-${svc.endTime}` : '-'}</div><div className="row-h font-mono font-bold text-indigo-700">{formatSpecialTime(svc.regularTime)}</div><div className="row-h font-mono font-bold text-indigo-700">{formatSpecialTime(svc.overtime)}</div><div className="row-h font-mono text-slate-400">{formatSpecialTime(svc.nightTime)}</div><div className="row-h font-mono font-bold text-indigo-700">{svc.timeAnnualLeave > 0 ? (<span>{formatSpecialTime(svc.timeAnnualLeave)}{svc.timeAnnualLeaveDetails && <span className="text-[9px] ml-1 font-normal text-slate-500">({svc.timeAnnualLeaveDetails})</span>}</span>) : '-'}</div></div></td>
                                       <td className="px-2 py-2 border-l"><div className="flex flex-col gap-0.5"><div className="row-h flex gap-1">{hasHolidayWork && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-700">休出あり</span>}{hasNightWork && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-yellow-900 text-white">夜業</span>}{rep.nightWorkVal && <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700">夜業{rep.nightWorkVal}</span>}</div><div className="row-h font-mono text-slate-400 text-xs">{rep.startTime ? '記録あり' : '-'}</div><div className="row-h font-mono font-bold text-blue-600">{formatSpecialTime(rep.regularTime)}</div><div className="row-h font-mono font-bold text-blue-600">{formatSpecialTime(rep.overtime)}</div><div className="row-h font-mono text-slate-400">{formatSpecialTime(rep.nightTime)}</div><div className="row-h flex gap-1 text-[9px]"></div></div></td>
@@ -3108,7 +3219,7 @@
               </div>
             )}
           </main>
-          <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} settings={settings} onSave={handleSaveSettings} onClear={handleClearSettings} />
+          <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} settings={settings} onSave={handleSaveSettings} onClear={handleClearSettings} onExportNextMonth={handleExportNextMonthSettings} />
           <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
           <NgDetailModal isOpen={!!ngDetailData} onClose={() => setNgDetailData(null)} title={ngDetailData?.title} items={ngDetailData?.items || []} allItems={ngDetailData?.allItems} employeeName={ngDetailData?.employeeName} />
         </div>
