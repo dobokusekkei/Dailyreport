@@ -1622,6 +1622,7 @@
       };
 
       const handleExportNextMonthSettings = () => {
+          // --- 1. 計算処理 ---
           const newBalances = {};
           Object.values(employees).forEach(emp => {
               const info = calculateCompensatoryInfo(emp, settings);
@@ -1634,12 +1635,30 @@
               compensatoryLeaveBalances: newBalances
           };
 
+          // --- 2. 保存処理 ---
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings));
+
+          // --- 3. ファイルダウンロード ---
           const blob = new Blob([JSON.stringify(nextSettings, null, 2)], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
           a.download = 'attendance_settings_next_month.json';
           a.click();
+
+          // --- 4. 【重要】ここが「白紙」にする追加処理です ---
+          setSettings(nextSettings); // ブラウザに保存した次月用設定を反映
+          setEmployees({});          // 解析済みデータを空にする
+          setFiles([]);              // 選択中のファイルを空にする
+          setFileMeta({});           // 年月などのメタ情報を空にする
+          
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          if (folderInputRef.current) folderInputRef.current.value = "";
+
+          setView('input');          // 「ファイル登録」画面に戻す
+          setShowSettings(false);    // 設定モーダルを閉じる
+
+          alert('次月用の設定を保存し、作業データをクリアしました。');
       };
 
       const checkDailyMismatch = (sch, rep, svc, isManager, isFlex, nextDaySch, nextDaySvc) => {
