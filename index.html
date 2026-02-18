@@ -3162,8 +3162,8 @@
                                  {!comparisonData.rows.every(r => !(r.warningMessage && r.warningMessage.includes('半休'))) && <span className="block text-[9px] font-bold text-rose-600">時刻重複あり</span>}
                                </div>
                              )}
-
-　　　　　　　　　　　　　　　　{comparisonData.summary.hasHibanKinmu && (
+                             
+                             {comparisonData.summary.hasHibanKinmu && (
                                <div className="p-2 rounded font-bold text-center border bg-orange-50 text-orange-800 border-orange-100">
                                  非番出勤有り
                                </div>
