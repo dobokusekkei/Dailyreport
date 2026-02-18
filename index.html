@@ -1589,10 +1589,10 @@
              
              // 発生: 服務簿優先、なければ勤務表
              let isEarned = false;
-             if (svc.types && svc.types.some(t => t.includes('週休出') && t.includes('不算入'))) {
+             // 修正: 週休出(不算入) または 非番勤務 の場合に発生とする
+             if (svc.types && svc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('非番勤務'))) {
                  isEarned = true;
-             } else if (!svc.status && sch.status && sch.status.includes('週休出') && sch.status.includes('不算入')) {
-                 // 勤務表のステータス文字列に依存（仮実装）
+             } else if (!svc.status && sch.status && sch.status.includes('週休出') && sch.status.includes('不算入')) {                 // 勤務表のステータス文字列に依存（仮実装）
                  isEarned = true;
              }
              if (isEarned) earned++;
@@ -1621,7 +1621,8 @@
           return { initialStock, earned, used, finalStock, warningUnused, warningShortage };
       };
 
-      const handleExportNextMonthSettings = () => {
+　　　　　　
+　　　 const handleExportNextMonthSettings = () => {
           // --- 1. 計算処理 ---
           const newBalances = {};
           Object.values(employees).forEach(emp => {
@@ -2151,6 +2152,7 @@
           let nightWorkDays = 0, hibanDays = 0, weekHolidayWorkCount = 0, compensatoryLeaveCount = 0;
           let saturdayHibanCount = 0, saturdayHibanMismatch = false;
           let divergenceCount = 0;
+          let hasHibanKinmu = false; // ★追加
           
           let hasOvertimeRecord = false;
           let hasNightWorkRecord = false;
@@ -2187,6 +2189,9 @@
                   if (!hasMondayTarget) saturdayHibanMismatch = true;
               }
               if (r.svc.hasDivergence) divergenceCount++;
+　　　　　 　　　if (r.svc.types && r.svc.types.some(t => t.includes('非番勤務'))) {
+                hasHibanKinmu = true;
+            　}
 
               if (
                   r.sch.overtime > 0 || r.svc.overtime > 0 || r.rep.overtime > 0 ||
@@ -2458,6 +2463,7 @@
         let saturdayHibanCount = 0;
         let saturdayHibanMismatch = false;
         let divergenceCount = 0; // 追加
+        let hasHibanKinmu = false;
         
         // 表示制御用フラグ
         let hasOvertimeRecord = false;
@@ -2498,6 +2504,9 @@
             }
             // 乖離カウント
             if (r.svc.hasDivergence) divergenceCount++;
+            if (r.svc.types && r.svc.types.some(t => t.includes('非番勤務'))) { // ★追加
+                hasHibanKinmu = true;
+            } 
 
             // 1. 残業関連
             if (
@@ -2574,6 +2583,7 @@
                 isRegularTotalMatch, isOvertimeTotalMatch, // 追加
                 totalAnnualLeaveDays, totalHalfPaidLeaveDays, totalTimeAnnualLeave, // 休暇集計追加
                 hasHalfDayLeave, // 半休チェック表示用
+                hasHibanKinmu,
                 compInfo // 振休残情報
             }, 
             isManager, isDirector, isFlex 
@@ -2861,10 +2871,7 @@
                     ) : (
                       <>
                         <div className="shrink-0 mb-4">
-                           <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
-                             
-                             {/* 所定内 */}
-                             <div 
+　　　　　　　　　　　　　<div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">                             <div 
                                className={`p-2 rounded font-bold text-center border ${comparisonData.summary.isRegularTotalMatch ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer'}`}
                                onClick={() => {
                                  if (comparisonData.summary.isRegularTotalMatch) return;
@@ -3045,8 +3052,14 @@
                              {/* 振休残数管理 (突合の代わり) */}
                              {(comparisonData.summary.compInfo.initialStock !== 0 || comparisonData.summary.compInfo.earned !== 0 || comparisonData.summary.compInfo.used !== 0 || comparisonData.summary.compInfo.finalStock !== 0) && (
                                <div 
-                                 className={`p-2 rounded font-bold text-center border ${comparisonData.summary.compInfo.warningUnused || comparisonData.summary.compInfo.warningShortage ? 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}
-                                 onClick={() => {
+                               className={`p-2 rounded font-bold text-center border ${
+                                comparisonData.summary.compInfo.warningUnused || comparisonData.summary.compInfo.warningShortage
+                                ? 'bg-rose-50 text-rose-700 border-rose-100 cursor-pointer' // 警告（赤）
+                                : (comparisonData.summary.compInfo.finalStock >= 1 
+                                ? 'bg-orange-50 text-orange-800 border-orange-100'       // ★追加：残数1以上（薄オレンジ）
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-100')   // 正常/残数なし（緑）
+                              }`}                                 
+                                   onClick={() => {
                                    const allNg = collectAllNgItems();
                                    if (allNg.length === 0) return;
                                    // ここでは振休残数に関するエラーだけをピックアップして表示してもよいが、全体を見せる形にする
@@ -3147,6 +3160,12 @@
                                >
                                  半休チェック: {comparisonData.rows.every(r => !(r.warningMessage && r.warningMessage.includes('半休'))) ? 'OK' : 'NG'}
                                  {!comparisonData.rows.every(r => !(r.warningMessage && r.warningMessage.includes('半休'))) && <span className="block text-[9px] font-bold text-rose-600">時刻重複あり</span>}
+                               </div>
+                             )}
+
+　　　　　　　　　　　　　　　　{comparisonData.summary.hasHibanKinmu && (
+                               <div className="p-2 rounded font-bold text-center border bg-orange-50 text-orange-800 border-orange-100">
+                                 非番出勤有り
                                </div>
                              )}
 
