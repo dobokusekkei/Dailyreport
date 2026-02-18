@@ -1571,7 +1571,7 @@
           setEmployees(prev => recalcEmployees(prev, defaultSettings));
       };
 
-      // 振休情報計算関数
+      // 振休情報計算関数 (修正版: 金曜夜業→土曜非番のみを発生条件とする)
       const calculateCompensatoryInfo = (emp, settings) => {
           const normName = normalizeName(emp.employeeName);
           const initialStock = settings.compensatoryLeaveBalances && settings.compensatoryLeaveBalances[normName] ? settings.compensatoryLeaveBalances[normName] : 0;
@@ -1582,30 +1582,62 @@
           const serviceMap = {};
           emp.serviceRecord.forEach(s => serviceMap[s.day] = s);
           
+          // 曜日判定用にスケジュールマップを作成
+          const scheduleMap = {};
+          emp.schedule.forEach(s => scheduleMap[s.day] = s);
+          
           // 全日リストアップ (1-31)
           for (let day = 1; day <= 31; day++) {
-             const sch = emp.schedule.find(s => s.day === day) || {};
-             const svc = emp.serviceRecord.find(s => s.day === day) || {};
+             const sch = scheduleMap[day] || {};
+             const svc = serviceMap[day] || {};
              
-             // 発生: 服務簿優先、なければ勤務表
+             // --- 発生判定 ---
+             // 条件: 「前日(金曜)に夜業」かつ「当日(土曜)に非番」であること
              let isEarned = false;
-             // 修正: 週休出(不算入) または 非番勤務 の場合に発生とする
-             if (svc.types && svc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('非番勤務'))) {
-                 isEarned = true;
-             } else if (!svc.status && sch.status && sch.status.includes('週休出') && sch.status.includes('不算入')) {                  // 勤務表のステータス文字列に依存（仮実装）
+             
+             // 1. 当日が土曜日か
+             const isSat = (sch.weekday && sch.weekday.includes('土'));
+             
+             // 2. 当日が非番か (服務簿優先)
+             // ※「非番勤務」もincludes('非番')でtrueになるため対象に含まれます
+             const isHiban = svc.types 
+                ? svc.types.some(t => t.includes('非番')) 
+                : (svc.status && svc.status.includes('非番'));
+
+             // 3. 前日(金曜)が夜業か
+             // 日付が1日の場合は前月データがないため判定不可(false)となります
+             let isPrevNightWork = false;
+             if (day > 1) {
+                 const prevSvc = serviceMap[day - 1] || {};
+                 const prevSch = scheduleMap[day - 1] || {};
+                 
+                 // 服務簿で判定
+                 isPrevNightWork = (prevSvc.types && prevSvc.types.some(t => t.includes('夜業'))) ||
+                                   (prevSvc.status && prevSvc.status.includes('夜業')) ||
+                                   (Math.abs((prevSvc.nightTime || 0) - 7.0) < 0.1);
+                                   
+                 // 服務簿がなければ勤務表で判定
+                 if (!prevSvc.status && !prevSvc.startTime) {
+                     isPrevNightWork = (prevSch.status && prevSch.status.includes('夜業')) ||
+                                       (prevSch.special && prevSch.special.includes('夜業')) ||
+                                       (Math.abs((prevSch.nightTime || 0) - 7.0) < 0.1);
+                 }
+             }
+
+             // 4. 判定実行 (土曜 かつ 非番 かつ 前日夜業)
+             if (isSat && isHiban && isPrevNightWork) {
                  isEarned = true;
              }
+
              if (isEarned) earned++;
 
-             // 消化: 振休 or 振替休日
-             // 服務簿
+             // --- 消化判定 (変更なし) ---
              let isUsed = false;
              if (svc.types && svc.types.some(t => t.includes('振休') || t.includes('振替休日'))) {
                  isUsed = true;
              } else if (svc.status && (svc.status.includes('振休') || svc.status.includes('振替休日'))) {
                  isUsed = true;
              } 
-             // 勤務表
              if (!isUsed) {
                  if (sch.status && (sch.status.includes('振休') || sch.status.includes('振替休日'))) {
                      isUsed = true;
