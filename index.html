@@ -1592,7 +1592,7 @@
              // 修正: 週休出(不算入) または 非番勤務 の場合に発生とする
              if (svc.types && svc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('非番勤務'))) {
                  isEarned = true;
-             } else if (!svc.status && sch.status && sch.status.includes('週休出') && sch.status.includes('不算入')) {                 // 勤務表のステータス文字列に依存（仮実装）
+             } else if (!svc.status && sch.status && sch.status.includes('週休出') && sch.status.includes('不算入')) {                  // 勤務表のステータス文字列に依存（仮実装）
                  isEarned = true;
              }
              if (isEarned) earned++;
@@ -1783,18 +1783,32 @@
             }
         }
 
+        const isNightWorkFact = isNightWorkF7 || 
+                                (Math.abs((svc.nightTime || 0) - 7.0) < 0.1) || 
+                                (Math.abs((sch.nightTime || 0) - 7.0) < 0.1);
+
         let nextDayCheckOK = true;
-        if (!isManager && isNightWorkF7) {
+        
+        // 管理職でなく、かつ夜業実績がある場合に翌日チェックを実行
+        if (!isManager && isNightWorkFact) {
            if (nextBase) {
-             const nextWeekday = nextDaySch ? nextDaySch.weekday : '';
-             if (!String(nextWeekday).includes('土')) {
-                 const isNextHiban = nextBase.types ? nextBase.types.some(t => t.includes('非番')) : (nextBase.status && nextBase.status.includes('非番'));
+                 // ★修正: 土曜除外ロジックを削除 (金曜夜業→土曜非番もチェック)
+                 
+                 // 「非番勤務」も「非番」の一種として認める（元のロジックを維持）
+                 const isNextHiban = nextBase.types 
+                    ? nextBase.types.some(t => t.includes('非番')) 
+                    : (nextBase.status && nextBase.status.includes('非番'));
+
                  if (!isNextHiban) {
                    warningMessage = warningMessage ? warningMessage + ' 翌非番NG' : '翌非番NG';
                    hasMismatch = true;
                    nextDayCheckOK = false;
                  }
-             }
+           } else {
+             // ★修正: 翌日のデータ自体がない場合はNG
+             warningMessage = warningMessage ? warningMessage + ' 翌データなし' : '翌データなし';
+             hasMismatch = true;
+             nextDayCheckOK = false;
            }
         }
 
@@ -2153,6 +2167,7 @@
           let saturdayHibanCount = 0, saturdayHibanMismatch = false;
           let divergenceCount = 0;
           let hasHibanKinmu = false; // ★追加
+          let hasCompLeaveViolation = false;
           
           let hasOvertimeRecord = false;
           let hasNightWorkRecord = false;
@@ -2189,9 +2204,9 @@
                   if (!hasMondayTarget) saturdayHibanMismatch = true;
               }
               if (r.svc.hasDivergence) divergenceCount++;
-　　　　　 　　　if (r.svc.types && r.svc.types.some(t => t.includes('非番勤務'))) {
+              if (r.svc.types && r.svc.types.some(t => t.includes('非番勤務'))) {
                 hasHibanKinmu = true;
-            　}
+              }
 
               if (
                   r.sch.overtime > 0 || r.svc.overtime > 0 || r.rep.overtime > 0 ||
@@ -2464,6 +2479,7 @@
         let saturdayHibanMismatch = false;
         let divergenceCount = 0; // 追加
         let hasHibanKinmu = false;
+        let hasCompLeaveViolation = false;
         
         // 表示制御用フラグ
         let hasOvertimeRecord = false;
@@ -2504,7 +2520,7 @@
             }
             // 乖離カウント
             if (r.svc.hasDivergence) divergenceCount++;
-            if (r.svc.types && r.svc.types.some(t => t.includes('非番勤務'))) { // ★追加
+            if (r.svc.types && r.svc.types.some(t => t.includes('非番勤務'))) {
                 hasHibanKinmu = true;
             } 
 
@@ -2573,6 +2589,28 @@
         // 振休残計算
         const compInfo = calculateCompensatoryInfo(currentEmployee, settings);
 
+        if (compInfo.finalStock > 0) {
+            result.forEach(r => {
+                const types = r.svc.types || [];
+                
+                // 修正: 半休や時間休は除外し、「全日の年休」のみをチェック対象とする
+                const hasAnnualLeave = types.some(t => 
+                    t === '年休' || t === '全日年休' || t === '有給休暇' || t === '有給'
+                );
+                
+                if (hasAnnualLeave) {
+                    const msg = '振休残有(優先消化)';
+                    if (r.check.warningMessage) {
+                        r.check.warningMessage += ` ${msg}`;
+                    } else {
+                        r.check.warningMessage = msg;
+                    }
+                    r.check.hasMismatch = true;
+                    hasCompLeaveViolation = true; 
+                }
+            });
+        }
+
         return { 
             rows: result, 
             summary: { 
@@ -2584,6 +2622,7 @@
                 totalAnnualLeaveDays, totalHalfPaidLeaveDays, totalTimeAnnualLeave, // 休暇集計追加
                 hasHalfDayLeave, // 半休チェック表示用
                 hasHibanKinmu,
+                hasCompLeaveViolation,
                 compInfo // 振休残情報
             }, 
             isManager, isDirector, isFlex 
@@ -2987,15 +3026,15 @@
                                    if (comparisonData.isManager || comparisonData.isDirector) {
                                       if (comparisonData.summary.hibanDays > 0) items = [{ date: '-', message: '管理職・取締役は非番を取得できません。' }];
                                    } else {
-                                       comparisonData.rows.filter(d => d.nextDayCheckOK === false).forEach(d => {
-                                         // 翌日の日付を取得するための処理を追加
-                                         const nextDayRow = comparisonData.rows.find(row => row.day === d.day + 1);
-                                         const dateStr = nextDayRow ? `${nextDayRow.day}日(${nextDayRow.weekday})` : `${d.day + 1}日`;
-                                         items.push({ date: dateStr, message: '翌日が非番になっていません(夜業明け)' });
-                                       });
-                                       if (comparisonData.summary.saturdayHibanMismatch) {
-                                           comparisonData.rows.filter(d => d.isSaturdayHibanNG).forEach(d => items.push({ date: `${d.day}日(${d.weekday})`, message: '土曜非番に対する月曜振休がありません' }));
-                                       }
+                                        comparisonData.rows.filter(d => d.nextDayCheckOK === false).forEach(d => {
+                                          // 翌日の日付を取得するための処理を追加
+                                          const nextDayRow = comparisonData.rows.find(row => row.day === d.day + 1);
+                                          const dateStr = nextDayRow ? `${nextDayRow.day}日(${nextDayRow.weekday})` : `${d.day + 1}日`;
+                                          items.push({ date: dateStr, message: '翌日が非番になっていません(夜業明け)' });
+                                        });
+                                        if (comparisonData.summary.saturdayHibanMismatch) {
+                                            comparisonData.rows.filter(d => d.isSaturdayHibanNG).forEach(d => items.push({ date: `${d.day}日(${d.weekday})`, message: '土曜非番に対する月曜振休がありません' }));
+                                        }
                                    }
 
                                    setNgDetailData({
@@ -3058,7 +3097,7 @@
                                 : (comparisonData.summary.compInfo.finalStock >= 1 
                                 ? 'bg-orange-50 text-orange-800 border-orange-100'       // ★追加：残数1以上（薄オレンジ）
                                 : 'bg-emerald-50 text-emerald-700 border-emerald-100')   // 正常/残数なし（緑）
-                              }`}                                 
+                              }`}                                     
                                    onClick={() => {
                                    const allNg = collectAllNgItems();
                                    if (allNg.length === 0) return;
@@ -3168,6 +3207,25 @@
                                  非番出勤有り
                                </div>
                              )}
+                            
+                            {/* 10. 振休優先消化NG (新規追加) */}
+                          {!!comparisonData.summary.hasCompLeaveViolation && (
+                            <div 
+                              className="p-2 rounded font-bold text-center border bg-rose-50 text-rose-700 border-rose-100 cursor-pointer"
+                              onClick={() => {
+                                const allNg = collectAllNgItems();
+                                setNgDetailData({ 
+                                  title: '振休優先消化不足', 
+                                  items: comparisonData.rows.filter(r => r.check.warningMessage && r.check.warningMessage.includes('振休残有')).map(r => ({ date: `${r.day}日(${r.weekday})`, message: '振休残がある状態で年休を取得しています' })), 
+                                  allItems: allNg, 
+                                  employeeName: currentEmployee.employeeName 
+                                });
+                              }}
+                            >
+                              振休優先NG
+                              <span className="block text-[9px] font-bold">年休取得あり</span>
+                            </div>
+                          )}
 
                            </div>
                         </div>
