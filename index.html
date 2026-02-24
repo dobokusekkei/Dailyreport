@@ -2543,19 +2543,16 @@
           }).filter(d => d.hasData);
         
         // --- 残業時間合計計算と45時間超過判定 ---
-        const totalRegularSvc = result.reduce((acc, r) => acc + (r.svc.regularTime || 0), 0);
-        const totalRegularRep = result.reduce((acc, r) => acc + (r.rep.regularTime || 0), 0);
-        const totalOvertimeSvc = result.reduce((acc, r) => acc + (r.svc.overtime || 0), 0);
-        const totalOvertimeRep = result.reduce((acc, r) => acc + (r.rep.overtime || 0), 0);
+        const totalRegularSvc = result.reduce((acc, r) => acc + (r.svc.regularTime || 0), 0);
+        const totalRegularRep = result.reduce((acc, r) => acc + (r.rep.regularTime || 0), 0);
+        const totalOvertimeSvc = result.reduce((acc, r) => acc + (r.svc.overtime || 0), 0);
+        const totalOvertimeRep = result.reduce((acc, r) => acc + (r.rep.overtime || 0), 0);
+        
+        // 日ごとの差異チェック (1日でも差異があればNGとする)
+        // ※変数名はUI側との互換性のためisRegularTotalMatch等を維持しています
+        const isRegularTotalMatch = result.every(r => Math.abs(r.diffRegular) < 0.01 || r.isSpecialCase);
+        const isOvertimeTotalMatch = result.every(r => isFlex ? !(r.sch.overtime > 0) : Math.abs(r.diffOvertime) < 0.01);
         
-        // 合計での差異チェック (diffRegular, diffOvertime の合計が0に近いかで判定)
-        // これにより、日々のズレが相殺されていればOKとなる（または特例処理後の差異合計を見る）
-        const totalDiffRegular = result.reduce((acc, r) => acc + r.diffRegular, 0);
-        const totalDiffOvertime = result.reduce((acc, r) => acc + r.diffOvertime, 0);
-        
-        const isRegularTotalMatch = Math.abs(totalDiffRegular) < 0.01;
-        const isOvertimeTotalMatch = Math.abs(totalDiffOvertime) < 0.01;
-
         const totalOvertimeSch = result.reduce((acc, r) => acc + (r.sch.overtime || 0), 0);
         const isOvertimeLimitExceeded = totalOvertimeSch > 45.0 || totalOvertimeSvc > 45.0 || totalOvertimeRep > 45.0;
 
