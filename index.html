@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.11.30.00)</title>
+  <title>勤怠・日報比較ツール (Ver.11.50.00)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -91,6 +91,7 @@
     const Plus = (p) => <IconWrapper {...p}><path d="M5 12h14" /><path d="M12 5v14" /></IconWrapper>;
     const ArrowRightCircle = (p) => <IconWrapper {...p}><circle cx="12" cy="12" r="10" /><path d="m12 16 4-4-4-4" /><path d="M8 12h8" /></IconWrapper>;
     const Maximize2 = (p) => <IconWrapper {...p}><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></IconWrapper>;
+    const Printer = (p) => <IconWrapper {...p}><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect width="12" height="8" x="6" y="14" /></IconWrapper>;
 
     const useSheetJS = () => {
       const [xlsx, setXlsx] = useState(null);
@@ -523,12 +524,25 @@
     };
 
     // --- NG詳細モーダル ---
-    const NgDetailModal = ({ isOpen, onClose, title, items, employeeName, allItems }) => {
+    // [修正] 引数に `shouldShow20thNotice` (20日締め注記を表示すべきかどうかのフラグ) を追加しました。
+    const NgDetailModal = ({ isOpen, onClose, title, items, employeeName, allItems, checkMode, is20thNightWork, shouldShow20thNotice }) => {
       if (!isOpen) return null;
 
       const handleCopy = () => {
-        const header = `${employeeName} 様\n下記のチェックで不整合が出ていますので修正をお願いいたします。\n\n`;
+        const isDay20 = checkMode === 'day20';
+        let header = `${employeeName} 様\n下記のチェック${isDay20 ? '（20日締め）' : ''}で不整合が出ていますので修正をお願いいたします。\n\n`;
         
+        // [修正] コピー内容の注記の判定を `isDay20` から `shouldShow20thNotice` に変更しました。
+        // これにより、猶予の意味がない人（夜業や振休がない人）にはコピーテキストに案内が含まれなくなります。
+        if (shouldShow20thNotice) {
+            header += `【20日締めに関するご案内】\n`;
+            header += `※まだ月末まで期間があるため、夜業と非番の回数突合や、振休の取得についてエラーが出ている場合でも、月末までに取得・調整いただければ問題ありません。\n`;
+            if (is20thNightWork) {
+                header += `※20日が夜業となっています。翌日21日の非番取得を忘れないようご注意ください。\n`;
+            }
+            header += `\n`;
+        }
+
         let body = '';
         if (allItems && allItems.length > 0) {
             body = allItems.map(cat => {
@@ -537,7 +551,7 @@
                 return catHeader + catBody;
             }).join('\n\n');
         } else {
-             body = `${title}\n` + items.map(i => `${i.date} ${i.message}`).join('\n');
+             body = `${title}\n` + items.map(i => `・${i.date} ${i.message}`).join('\n');
         }
         
         const text = header + body;
@@ -556,14 +570,91 @@
         document.body.removeChild(textArea);
       };
 
+      const handlePrint = () => {
+        const isDay20 = checkMode === 'day20';
+        const docTitle = isDay20 ? `不整合リスト(20日締め) - ${employeeName}` : `不整合リスト - ${employeeName}`;
+        const mainTitle = isDay20 ? `${employeeName} 様 勤怠チェック結果 (20日締め)` : `${employeeName} 様 勤怠チェック結果`;
+
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        let html = `
+          <!DOCTYPE html>
+          <html lang="ja">
+          <head>
+            <meta charset="UTF-8">
+            <title>${docTitle}</title>
+            <style>
+              body { font-family: sans-serif; padding: 20px; line-height: 1.6; color: #333; }
+              h1 { font-size: 18px; border-bottom: 2px solid #ccc; padding-bottom: 10px; margin-bottom: 20px; }
+              .notice { font-size: 13px; color: #b45309; background-color: #fef3c7; padding: 12px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #fde68a; }
+              .notice-danger { color: #e11d48; font-weight: bold; margin-top: 8px; display: block; }
+              h2 { font-size: 15px; color: #e11d48; margin-top: 20px; margin-bottom: 10px; background-color: #ffe4e6; padding: 5px 10px; border-radius: 4px; }
+              ul { margin: 0; padding-left: 20px; list-style-type: none; }
+              li { margin-bottom: 8px; font-size: 14px; }
+              .date { font-family: monospace; font-weight: bold; margin-right: 10px; }
+            </style>
+          </head>
+          <body>
+            <h1>${mainTitle}</h1>
+        `;
+
+        // [修正] 印刷プレビュー画面の注記の判定を `isDay20` から `shouldShow20thNotice` に変更しました。
+        if (shouldShow20thNotice) {
+            html += `<div class="notice">
+                <strong>【20日締めに関するご案内】</strong><br/>
+                ※まだ月末まで期間があるため、夜業と非番の回数突合や、振休の取得についてエラーが出ている場合でも、月末までに取得・調整いただければ問題ありません。
+                ${is20thNightWork ? '<span class="notice-danger">※20日が夜業となっています。翌日21日の非番取得を忘れないようご注意ください。</span>' : ''}
+            </div>`;
+        }
+
+        if (allItems && allItems.length > 0) {
+          allItems.forEach(cat => {
+            html += `<h2>【${cat.category}】</h2><ul>`;
+            cat.items.forEach(i => {
+              html += `<li><span class="date">${i.date}</span> ${i.message}</li>`;
+            });
+            html += `</ul>`;
+          });
+        } else {
+          html += `<h2>${title}</h2><ul>`;
+          items.forEach(i => {
+            html += `<li><span class="date">${i.date}</span> ${i.message}</li>`;
+          });
+          html += `</ul>`;
+        }
+
+        html += `</body></html>`;
+        
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          printWindow.print();
+          printWindow.close();
+        }, 250);
+      };
+
       return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 modal-overlay" onClick={onClose}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-4 border-b flex justify-between items-center bg-rose-50 rounded-t-2xl">
-              <h3 className="font-bold text-rose-800 flex items-center gap-2"><AlertTriangle className="w-5 h-5"/> {title}</h3>
+              <h3 className="font-bold text-rose-800 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5"/> {title}
+              {checkMode === 'day20' && <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full font-normal">20日〆</span>}
+              </h3>
+
+
               <button onClick={onClose}><X className="w-5 h-5 text-rose-400"/></button>
             </div>
             <div className="p-4 overflow-y-auto flex-1">
+              {/* [修正] 画面上の注記の表示判定を `checkMode === 'day20'` から `shouldShow20thNotice` に変更しました。 */}
+              {shouldShow20thNotice && (
+              <div className="mb-4 p-3 bg-slate-50 border border-slate-200 text-slate-700 rounded-lg text-xs leading-relaxed">
+              <strong>【20日締めに関するご案内】</strong><br/>
+              ※まだ月末まで期間があるため、夜業と非番の回数突合や、振休の取得についてエラーが出ている場合でも、月末までに取得・調整いただければ問題ありません。<br/>
+              {is20thNightWork && <span className="font-bold text-rose-600 mt-1 block">※20日が夜業となっています。翌日21日の非番取得を忘れないようご注意ください。</span>}
+            </div>
+           )}
+              
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-slate-500 border-b">
                   <tr><th className="pb-2">日付</th><th className="pb-2">内容</th></tr>
@@ -579,15 +670,19 @@
               </table>
               {items.length === 0 && <p className="text-slate-400 text-center py-4">詳細なNG箇所を特定できませんでした（集計不一致など）</p>}
             </div>
-            <div className="p-4 border-t bg-slate-50 rounded-b-2xl flex justify-end">
-              <button onClick={handleCopy} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 text-sm font-bold">
+            {/* ▼ gap-3で隙間をあけ、ボタンに w-fit(幅を文字に合わせる) を追加して幅を調整しました ▼ */}
+            <div className="p-4 border-t bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+              <button onClick={handlePrint} className="w-fit flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-bold">
+                <Printer className="w-4 h-4"/> 印刷
+              </button>
+              <button onClick={handleCopy} className="w-fit flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 text-sm font-bold">
                 <Copy className="w-4 h-4"/> コピー
               </button>
             </div>
           </div>
         </div>
       );
-    };
+    };
 
     class AttendanceFileParser {
       constructor(xlsx) { 
@@ -2899,12 +2994,25 @@
       // タブ表示用の月取得
       const targetMonthStr = fileMeta.yearMonth ? `${parseInt(fileMeta.yearMonth.slice(4))}月` : '';
 
+      // [修正] --- 追加：20日締め特有の注記を表示するかどうかの判定 ---
+      // 20日が夜業かどうかを計算して変数化します。
+      const is20thNightWork = checkMode === 'day20' && comparisonData && comparisonData.rows && !!comparisonData.rows.find(r => r.day === 20)?.hasNightWork;
+      
+      // 当月のデータに「夜業」か「振休（残数・発生など）」が含まれる場合のみ、注記を表示するフラグを立てます。
+      const shouldShow20thNotice = checkMode === 'day20' && comparisonData && (
+          comparisonData.summary.hasNightWorkRecord ||       // 当月に夜業の実績があるか
+          comparisonData.summary.compInfo.initialStock > 0 || // 前月からの振休残があるか
+          comparisonData.summary.compInfo.earned > 0 ||       // 当月に振休が発生したか
+          comparisonData.summary.compInfo.finalStock > 0 ||   // 最終的に振休が残っているか
+          is20thNightWork                                     // 20日が夜業であるか
+      );
+
       return (
         <div className="h-full w-full bg-slate-50 text-slate-900 p-4 md:p-6 flex flex-col overflow-hidden">
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.30.00)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.50.00)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -3532,7 +3640,19 @@
           </main>
           <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} settings={settings} onSave={handleSaveSettings} onClear={handleClearSettings} onExportNextMonth={handleExportNextMonthSettings} />
           <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
-          <NgDetailModal isOpen={!!ngDetailData} onClose={() => setNgDetailData(null)} title={ngDetailData?.title} items={ngDetailData?.items || []} allItems={ngDetailData?.allItems} employeeName={ngDetailData?.employeeName} />
+          <NgDetailModal 
+            isOpen={!!ngDetailData} 
+            onClose={() => setNgDetailData(null)} 
+            title={ngDetailData?.title} 
+            items={ngDetailData?.items || []} 
+            allItems={ngDetailData?.allItems} 
+            employeeName={ngDetailData?.employeeName} 
+            checkMode={checkMode}
+            // [修正] 変数で判定済みのものを渡すように変更
+            is20thNightWork={is20thNightWork}
+            // [修正] 新規追加した表示判定フラグを Props として渡します
+            shouldShow20thNotice={shouldShow20thNotice}
+          />
         </div>
       );
     }
