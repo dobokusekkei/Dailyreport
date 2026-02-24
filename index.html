@@ -1885,6 +1885,11 @@
       const analyzeEmployeeMismatch = (emp, isManager, isFlex, limitDay, masterSchedule, isDirector) => {
         if (!isFlex && emp.warnings && emp.warnings.includes('H列不整合')) return true;
         let hasError = false;
+        // ▼▼▼ 追加: 指定日(limitDay)までに乖離や実績反映なしがあればエラーとする ▼▼▼
+        if (emp.serviceRecord.some(r => r.day <= limitDay && r.hasDivergence)) hasError = true;
+        if (emp.serviceRecord.some(r => r.day <= limitDay && r.status && r.status.includes('実績反映なし'))) hasError = true;
+        // ▲▲▲ 追加ここまで ▲▲▲       
+        
         let nightWorkCount = 0;
         let hibanCount = 0;
         let compensatoryLeaveCount = 0;
@@ -2534,7 +2539,10 @@
             return { 
               day, weekday, rowColor,
               sch: derivedSch, rep, svc: derivedSvc, ...check, // 補完後のデータを使用
-              hasData: derivedSch.status || rep.status || derivedSvc.status || derivedSch.overtime > 0 || rep.overtime > 0 || derivedSvc.startTime || derivedSch.regularTime > 0 || rep.regularTime > 0, 
+              // ▼▼▼ 変更: hasDivergenceやtypes(種別)が存在する場合もデータありとみなすよう条件を拡張 ▼▼▼
+              hasData: derivedSch.status || rep.status || derivedSvc.status || derivedSch.overtime > 0 || rep.overtime > 0 || derivedSvc.startTime || derivedSch.regularTime > 0 || rep.regularTime > 0 || derivedSvc.hasDivergence || (derivedSvc.types && derivedSvc.types.length > 0) || derivedSvc.nightTime > 0 || derivedSvc.timeAnnualLeave > 0,
+              // ▲▲▲ 変更ここまで ▲▲▲              
+              
               hasHolidayWork: rep.holidayWork > 0,
               hasNightWork,
               isSaturdayHibanNG: false,
