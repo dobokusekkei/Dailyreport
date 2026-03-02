@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>勤怠・日報比較ツール (Ver.11.50.00)</title>
+  <title>勤怠・日報比較ツール (Ver.12.00.00)</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2093,9 +2093,41 @@
             
             if (isSat && isSvcHiban) {
                 saturdayHibanCount++;
-                const mondaySvc = serviceMap[day+2] || {};
-                const hasMondayTarget = (mondaySvc.types && mondaySvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
-                                      || (!mondaySvc.types && mondaySvc.status && (mondaySvc.status.includes('振休') || mondaySvc.status.includes('振替休日')));
+                
+                let targetDay = day + 2;
+                let hasTargetData = false;
+                let targetSvc = {};
+                
+                // 加休をスキップして次の平日を探すループ
+                while (targetDay <= limitDay) {
+                    const tSch = scheduleMap[targetDay] || {};
+                    if (tSch.status && tSch.status.includes('加休')) {
+                        targetDay++;
+                    } else {
+                        targetSvc = serviceMap[targetDay] || {};
+                        hasTargetData = targetSvc.status || targetSvc.startTime || targetSvc.endTime || (targetSvc.types && targetSvc.types.length > 0);
+                        break;
+                    }
+                }
+                
+                let hasMondayTarget = false;
+                if (hasTargetData) {
+                    // 見つけた平日のデータで通常通りチェック
+                    hasMondayTarget = (targetSvc.types && targetSvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
+                                      || (!targetSvc.types && targetSvc.status && (targetSvc.status.includes('振休') || targetSvc.status.includes('振替休日')));
+                } else {
+                    // targetDayが月末を越えてしまった、または対象データがない場合は、前日（金曜）の夜業をチェックして特例OKとする
+                    const fridaySvc = serviceMap[day - 1] || {};
+                    const fridaySch = scheduleMap[day - 1] || {};
+                    const hasFridayNightWork = (fridaySvc.types && fridaySvc.types.some(t => t.includes('夜業')))
+                                               || (fridaySvc.status && fridaySvc.status.includes('夜業'))
+                                               || (Math.abs((fridaySvc.nightTime || 0) - 7.0) < 0.1)
+                                               || (Math.abs((fridaySch.nightTime || 0) - 7.0) < 0.1);
+                    if (hasFridayNightWork) {
+                        hasMondayTarget = true; // 特例OK
+                    }
+                }
+                
                 if (!hasMondayTarget) saturdayHibanCheckNG = true;
             }
           }
@@ -2357,12 +2389,37 @@
               const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
               if (isSat && isSvcHiban) {
                   saturdayHibanCount++;
-                  const mondayRow = results.find(rr => rr.day === r.day + 2); 
+                  
+                  let targetDay = r.day + 2;
+                  let targetRow = null;
+                  
+                  // 加休をスキップ
+                  while (targetDay <= limitDay) {
+                      const tRow = results.find(rr => rr.day === targetDay);
+                      if (tRow && tRow.sch && tRow.sch.status && tRow.sch.status.includes('加休')) {
+                          targetDay++;
+                      } else {
+                          targetRow = tRow;
+                          break;
+                      }
+                  }
+                  
                   let hasMondayTarget = false;
-                  if (mondayRow) {
-                      const mSvc = mondayRow.svc;
+                  
+                  if (targetRow && (targetRow.svc.status || (targetRow.svc.types && targetRow.svc.types.length > 0) || targetRow.svc.startTime)) {
+                      const mSvc = targetRow.svc;
                       hasMondayTarget = (mSvc.types && mSvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
-                                      || (!mSvc.types && mSvc.status && (mSvc.status.includes('振休') || mSvc.status.includes('振替休日')));
+                                        || (!mSvc.types && mSvc.status && (mSvc.status.includes('振休') || mSvc.status.includes('振替休日')));
+                  } else {
+                      // 次月にまたがる等で見つからない場合
+                      const fridayRow = results.find(rr => rr.day === r.day - 1);
+                      if (fridayRow) {
+                          const fSvc = fridayRow.svc;
+                          const hasFridayNightWork = (fSvc.types && fSvc.types.some(t => t.includes('夜業'))) || (fSvc.status && fSvc.status.includes('夜業')) || fridayRow.check.isNightWorkDay;
+                          if (hasFridayNightWork) {
+                              hasMondayTarget = true;
+                          }
+                      }
                   }
                   if (!hasMondayTarget) saturdayHibanMismatch = true;
               }
@@ -2701,14 +2758,44 @@
             const isSvcHiban = r.svc.types ? r.svc.types.some(t => t.includes('非番')) : (r.svc.status && r.svc.status.includes('非番'));
             if (isSat && isSvcHiban) {
                 saturdayHibanCount++;
-                const mondayRow = result.find(rr => rr.day === r.day + 2); // 修正箇所: result -> results
+                
+                let targetDay = r.day + 2;
+                let targetRow = null;
+                
+                // 加休をスキップ
+                while (targetDay <= limitDay) {
+                    const tRow = result.find(rr => rr.day === targetDay);
+                    if (tRow && tRow.sch && tRow.sch.status && tRow.sch.status.includes('加休')) {
+                        targetDay++;
+                    } else {
+                        targetRow = tRow;
+                        break;
+                    }
+                }
+                
                 let hasMondayTarget = false;
-                if (mondayRow) {
-                    const mSvc = mondayRow.svc;
+                
+                if (targetRow && (targetRow.svc.status || (targetRow.svc.types && targetRow.svc.types.length > 0) || targetRow.svc.startTime)) {
+                    const mSvc = targetRow.svc;
                     hasMondayTarget = (mSvc.types && mSvc.types.some(t => (t.includes('週休出') && t.includes('不算入')) || t.includes('振休') || t.includes('振替休日')))
                                       || (!mSvc.types && mSvc.status && (mSvc.status.includes('振休') || mSvc.status.includes('振替休日')));
+                } else {
+                    // 次月にまたがる等で見つからない場合
+                    const fridayRow = result.find(rr => rr.day === r.day - 1);
+                    if (fridayRow) {
+                        const fSvc = fridayRow.svc;
+                        const hasFridayNightWork = (fSvc.types && fSvc.types.some(t => t.includes('夜業'))) || (fSvc.status && fSvc.status.includes('夜業')) || fridayRow.check.isNightWorkDay;
+                        if (hasFridayNightWork) {
+                            hasMondayTarget = true;
+                            r.isMonthEndSaturdayHibanOK = true; // ★画面表示用の特例OKフラグを追加
+                        }
+                    }
                 }
-                if (!hasMondayTarget) saturdayHibanMismatch = true;
+                
+                if (!hasMondayTarget) {
+                    saturdayHibanMismatch = true;
+                    r.isSaturdayHibanNG = true; // エラー詳細モーダル用
+                }
             }
             // 乖離カウント
             if (r.svc.hasDivergence) divergenceCount++;
@@ -3012,7 +3099,7 @@
           <header className="shrink-0 max-w-7xl mx-auto w-full mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Zap className="w-6 h-6" /></div>
-              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.11.50.00)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
+              <div><h1 className="text-xl font-bold text-slate-800">勤怠データ照合ツール (Ver.12.00.00)</h1><p className="text-xs text-slate-500 font-medium">旧姓統合・フレックス数表示対応・Excel復元機能・取締役対応</p></div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowHelp(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors"><HelpCircle className="w-4 h-4" /> ヘルプ</button>
@@ -3312,7 +3399,10 @@
                                  )}
                                  {!(comparisonData.isManager || comparisonData.isDirector) && comparisonData.summary.saturdayHibanCount > 0 && (
                                    <span className={`block text-[9px] font-normal ${!comparisonData.summary.saturdayHibanMismatch ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
-                                     土曜非番対応: {!comparisonData.summary.saturdayHibanMismatch ? 'OK' : 'NG'}
+                                     { comparisonData.rows.some(r => r.isMonthEndSaturdayHibanOK) 
+                                         ? <span className="text-emerald-600 font-bold">月末金曜夜業土曜非番ok</span>
+                                         : `土曜非番対応: ${!comparisonData.summary.saturdayHibanMismatch ? 'OK' : 'NG'}`
+                                     }
                                    </span>
                                  )}
                                </div>
